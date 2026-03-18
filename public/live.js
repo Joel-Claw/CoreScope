@@ -12,6 +12,7 @@
   let soundEnabled = false;
   let showGhostHops = localStorage.getItem('live-ghost-hops') !== 'false';
   let _onResize = null;
+  let _navCleanup = null;
 
   // === VCR State Machine ===
   const VCR = {
@@ -540,14 +541,15 @@
     setInterval(updateTimeline, 5000);
 
     // Auto-hide nav
-    let navTimeout = null;
     const topNav = document.querySelector('.top-nav');
     if (topNav) { topNav.style.position = 'fixed'; topNav.style.width = '100%'; topNav.style.zIndex = '1100'; }
+    _navCleanup = { timeout: null, fn: null };
     function showNav() {
       if (topNav) topNav.classList.remove('nav-autohide');
-      clearTimeout(navTimeout);
-      navTimeout = setTimeout(() => { if (topNav) topNav.classList.add('nav-autohide'); }, 4000);
+      clearTimeout(_navCleanup.timeout);
+      _navCleanup.timeout = setTimeout(() => { if (topNav) topNav.classList.add('nav-autohide'); }, 4000);
     }
+    _navCleanup.fn = showNav;
     const livePage = document.querySelector('.live-page');
     if (livePage) {
       livePage.addEventListener('mousemove', showNav);
@@ -1000,6 +1002,16 @@
     if (_onResize) { window.removeEventListener('resize', _onResize); window.removeEventListener('orientationchange', _onResize); }
     const topNav = document.querySelector('.top-nav');
     if (topNav) { topNav.classList.remove('nav-autohide'); topNav.style.position = ''; topNav.style.width = ''; topNav.style.zIndex = ''; }
+    if (_navCleanup) {
+      clearTimeout(_navCleanup.timeout);
+      const livePage = document.querySelector('.live-page');
+      if (livePage && _navCleanup.fn) {
+        livePage.removeEventListener('mousemove', _navCleanup.fn);
+        livePage.removeEventListener('touchstart', _navCleanup.fn);
+        livePage.removeEventListener('click', _navCleanup.fn);
+      }
+      _navCleanup = null;
+    }
     nodesLayer = pathsLayer = animLayer = heatLayer = null;
     nodeMarkers = {}; nodeData = {};
     recentPaths = [];
