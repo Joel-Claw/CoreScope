@@ -1,221 +1,138 @@
-# MeshCore Analyzer — Build Plan (v2)
+# MeshCore Analyzer — Build Plan
 
-## Target
-Open-source clone of `analyzer.letsmesh.net` — self-hosted MeshCore packet analyzer.
+## What Is This
+Open-source, self-hosted MeshCore mesh network packet analyzer. Community alternative to the closed-source `analyzer.letsmesh.net`.
 
-## Nav Bar
-Packets | Map | Channels | Nodes | Traces | More
-
-## CRITICAL: meshcore-decoder Path Parsing Bug
-
-The `@michaelhart/meshcore-decoder` npm library treats path_length as raw byte count.
-Per `Packet.h`, it encodes hash_size (top 2 bits) + hash_count (lower 6 bits):
-```
-hash_size  = (path_len >> 6) + 1
-hash_count = path_len & 63
-path_bytes = hash_size * hash_count
-```
-We wrote our own decoder in `decoder.js`.
+**Live instance:** https://analyzer.00id.net
 
 ## Tech Stack
-- **Frontend**: SPA, vanilla HTML/CSS/JS, Leaflet for maps, WebSocket for live updates
+- **Frontend**: SPA, vanilla HTML/CSS/JS, Leaflet maps, WebSocket live feed, Canvas animations
 - **Backend**: Node.js + Express + better-sqlite3 + ws + mqtt
-- **Decoder**: Custom `decoder.js` (from Packet.h spec)
-- **Style**: Dark-ish theme, blue accent (matches letsmesh)
+- **Decoder**: Custom `decoder.js` (from MeshCore Packet.h spec)
+- **Data**: SQLite, MQTT ingestion, REST API, manual packet injection
 
-## Milestones
+## Architecture
 
-### M1: Custom Packet Decoder ✅ (in progress)
-- `decoder.js` — decodes all packet types from raw hex
-- Correct path_length parsing (hash_size/hash_count encoding)
+### Custom Decoder
+The `@michaelhart/meshcore-decoder` npm library has a path parsing bug — treats `path_length` as raw byte count. Per `Packet.h`, it encodes `hash_size` (top 2 bits) + `hash_count` (lower 6 bits). We wrote `decoder.js` from scratch.
 
-### M2: SQLite Schema ✅ DONE
-- `db.js` — packets, nodes, observers, paths tables
-- All CRUD helpers, pagination, filtering
+### Packet Ingestion
+- MQTT subscriber (configurable broker/topic)
+- Companion bridge (BLE → MQTT via `meshcore_observer.py`)
+- POST `/api/packets` for manual injection
+- WebSocket broadcast to all connected clients
 
-### M3: Server + MQTT + WebSocket + API
-- `server.js` — single file combining Express server, MQTT subscriber, WebSocket broadcaster, REST API
-- MQTT: subscribe to `meshcore/+/+/packets`, decode, store, broadcast via WS
-- POST `/api/packets` for manual injection ("Bring Your Own Packet")
-- REST endpoints:
-  - `GET /api/packets` — paginated, filterable by type/region/observer/hash, ?groupByHash=true for dedup
-  - `GET /api/packets/:id` — single packet with full decode + path + byte breakdown
-  - `GET /api/nodes` — filterable by role (repeater/room/companion/sensor), region, lastHeard
-  - `GET /api/nodes/:pubkey` — detail + recent adverts
-  - `GET /api/channels` — list of known channels with last message + message count
-  - `GET /api/channels/:hash/messages` — paginated messages for a channel
-  - `GET /api/observers` — observer list with stats
-  - `GET /api/stats` — summary counts
-  - `GET /api/traces/:hash` — trace a packet across observers
-- WebSocket: broadcast new packets + messages to connected clients
-- Config via `config.json` (MQTT broker, channel keys, default region)
+### Channel Decryption
+- Hashtag channel keys derived via `sha256("#name")[:16]`
+- 1-byte channel hash means collisions — must verify by successful decryption
+- Known PSKs configurable in `config.json`
 
-### M4: SPA Shell + Packets Page
-- `public/index.html` — SPA shell with nav bar, client-side routing
-- `public/style.css` — dark/blue theme matching letsmesh aesthetic
-- `public/app.js` — router, WebSocket client, shared utilities
-- **Packets page** (`public/packets.js`):
-  - Table: Region, Time, Hash (truncated), Size, Type (color badge), First Observer, Repeats, Path (hop arrows), Details
-  - Filters: Observer dropdown, Region, Type, time range
-  - "Group by Hash" toggle (collapses duplicates from multiple observers)
-  - "Bring Your Own Packet" button → hex input modal
-  - Click row → right panel: **Packet Byte Breakdown**
-    - Header metadata (observer, radio: freq/SF/BW/CR)
-    - Color-coded hex dump (header=red, path=green, payload=yellow)
-    - Field-by-field table: offset, field name, value, description
-    - For ADVERTs: Public Key, Timestamp, Signature, App Flags, Lat, Lon, Node Name sections
-  - Auto-scroll with pause, WebSocket live updates
+## Completed Milestones
 
-### M5: Map Page
-- `public/map.js` — Leaflet full-screen map
-- Node markers: icon/color by role (repeater=blue filled, companion=blue outline, room=grey, sensor=small)
-- Controls panel (top-right):
-  - Node type checkboxes with counts (Repeaters, Companions, Room Servers, Sensors)
-  - "Show clusters" toggle
-  - Filters: "MQTT Connected Only", "Show direct neighbors"
-  - "Last Heard" dropdown (1h, 6h, 24h, 7d, 30d)
-  - Quick Jump buttons (SJC, LAR, etc.) — region IATA codes
-- Click marker → popup: Name, Key (truncated), Location, Last Advert time, Observers/regions
+### M1: Custom Packet Decoder ✅
+### M2: SQLite Schema ✅
+### M3: Server + MQTT + WebSocket + API ✅
+### M4: SPA Shell + Packets Page ✅
+- Grouped/ungrouped views, detail panel, color-coded byte breakdown
+- Resizable columns with localStorage persistence
+- Packet hash click → detail with hex dump, field table
 
-### M6: Channels Page (the killer feature)
-- `public/channels.js` — chat-style UI
-- Left sidebar: channel list
-  - Each channel: color badge (2-letter abbreviation), name, last message preview, time
-  - Channels: Public (default key), #bot, #test, #emergency, #hamradio, #jokes, #sports, #chat, etc.
-  - Region selector dropdown at top
-- Right panel: message feed for selected channel
-  - Sender avatar (first letter of name, colored circle — consistent color per sender)
-  - Sender name
-  - Message bubble (dark background)
-  - @mentions highlighted in green/accent
-  - Below each message: time, "X repeats heard by Y observers [REGION] - LP: Z", "Analyze" link
-  - Decryption using known channel keys (public channel key built-in)
-  - Auto-scroll, WebSocket live updates
+### M5: Map Page ✅
+- Leaflet dark tiles, node markers by role, clustering
+- Last-heard filters, region quick-jump
+- Click marker → popup with node info
 
-### M7: Nodes Page
-- `public/nodes.js` — node directory
-- Quick search bar at top
-- Count badges: N repeaters, N rooms, N companions, N sensors
-- Tabs: Repeaters | Rooms | Companions | Sensors
-- Table: Name, Public Key (truncated), Region tags (SJC, SFO, OAK as badges), Last Seen ("Xm ago")
-- Sortable columns
-- Click row → right panel: **Node Detail**
-  - Mini Leaflet map showing node location
-  - Name, full public key, regions, first/last seen
-  - QR code (encode node public key for sharing)
-  - "Copy URL" button
-  - **Recent Adverts** timeline: green/blue event dots with timestamps, "heard X times", link to raw packet
+### M6: Channels Page ✅
+- Chat-style UI with channel sidebar, message feed
+- Decryption using known PSKs, @mention highlighting
+- Hash collision filtering (encrypted packets excluded from named channels)
 
-### M8: Traces Page
-- `public/traces.js` — packet propagation tracing
-- Input: packet hash
-- Shows: which observers saw this packet, in what order, with what SNR/RSSI
-- Timeline visualization of packet propagation across the mesh
-- Path visualization (node hashes with arrows)
+### M7: Nodes Page ✅
+- Searchable directory with role tabs, detail panel
+- QR code sharing, advert timeline
+- Node health cards with status reasoning
+- Favorites system (localStorage stars, "Your Nodes" home section)
+- Responsive mobile layout, full-screen single-node detail via `#/nodes/PUBKEY`
+- Prefix search dropdown on home page
 
-### M9: Observer Status Page (under More dropdown)
-- `public/observers.js`
-- Table: Name, IATA region, last seen, packet count, uptime
-- Health indicators (green/yellow/red)
-- Packets/hour sparkline or bar
+### M8: Trace Routes ✅
+### M9: Observer Status ✅
+### M10: Polish ✅
+- Dark mode toggle, global search (Ctrl+K)
+- Config file support, README
 
-### M10: Polish
-- Dark mode toggle (sun/moon icon in nav)
-- Search (magnifying glass in nav)
-- Login button (placeholder for future auth)
-- Config file support
-- README with setup instructions
-- "Forum" link in nav (external link placeholder)
+### M11: Synthetic Packet Generator ✅
+### M12: End-to-End Validation ✅
+### M13: Frontend Smoke Tests ✅
 
-### M11: Synthetic Packet Generator (`tools/generate-packets.js`)
-- Generates realistic synthetic MeshCore packets of ALL types:
-  - ADVERTs: random node names, locations scattered across Bay Area, varied roles (repeater/room/companion/sensor), realistic pubkeys, varied hop counts (0-8)
-  - GRP_TXT: messages on multiple channels (public, #bot, #test, #emergency, #chat), realistic sender names, @mentions, varied message content
-  - TXT_MSG: direct messages between random node pairs
-  - ACK: acknowledgments for recent messages
-  - REQ/RESPONSE: request-response pairs
-  - TRACE: trace packets with SNR values in path
-  - PATH: path announcements
-- Multiple synthetic observers (SJC-OBS-1, SFO-OBS-2, OAK-OBS-3) each "hearing" packets with realistic SNR/RSSI values (-120 to -60 dBm, -20 to +10 dB SNR)
-- Same packet heard by multiple observers (with different SNR/RSSI) to test dedup/groupByHash
-- Packets arrive with realistic timing (not all at once — stagger over simulated time window)
-- Output modes:
-  - `--mqtt` — publish to local MQTT broker (requires mosquitto running)
-  - `--api` — POST to `http://localhost:3000/api/packets`
-  - `--json` — dump to stdout/file for manual import
-- Configurable: `--count 500 --duration 60` (500 packets over 60 seconds)
-- Default: 200 packets, mix of ~60% ADVERTs, 25% GRP_TXT, 10% ACK, 5% other
+### M14: Accessibility ✅
+- Semantic HTML, ARIA attributes, keyboard navigation
+- WCAG AA contrast verification on map and channel screens
+- Proper focus management, screen reader landmarks
 
-### M12: End-to-End Validation (`tools/e2e-test.js`)
-- Automated test script that:
-  1. Starts the server (spawns `node server.js` as child process)
-  2. Waits for server ready (poll `/api/stats`)
-  3. Connects a WebSocket client to track live updates
-  4. Sends 100+ synthetic packets via POST `/api/packets`
-  5. Validates:
-     - **Ingestion**: `/api/stats` shows correct total counts
-     - **Packets API**: `/api/packets` returns all packets, filtering by type/region/observer works, pagination works, groupByHash correctly deduplicates
-     - **Packet detail**: `/api/packets/:id` returns correct byte breakdown with color ranges, decoded payload matches expected values
-     - **Nodes**: ADVERTs created nodes in `/api/nodes`, role filtering works, node detail shows recent adverts
-     - **Channels**: GRP_TXT packets appear in `/api/channels`, messages are listed with correct sender/text
-     - **Observers**: all synthetic observers appear with correct packet counts
-     - **Traces**: same-hash packets from different observers appear in `/api/traces/:hash`
-     - **WebSocket**: received real-time broadcasts for each injected packet
-  6. Tests MQTT path (if mosquitto available): publish raw MQTT messages, verify they flow through to DB + WebSocket
-  7. Prints pass/fail summary with details on failures
-  8. Kills the server process
-  9. Exit code 0 = all pass, 1 = failures
+### M15: Dark Mode Overhaul ✅
+- Explicit `data-theme` attribute (never remove — `prefers-color-scheme` trap)
+- Consistent dark theme across all pages
 
-### M13: Frontend Smoke Tests (`tools/frontend-test.js`)
-- Uses the server + synthetic data from M12
-- Fetches each page's HTML and verifies:
-  - index.html loads, contains nav with all links
-  - Packets page: table renders, filters exist, byte breakdown panel works
-  - Map page: Leaflet container exists, node markers present
-  - Channels page: channel sidebar renders, messages load
-  - Nodes page: tabs exist, node detail panel works
-  - Traces page: input exists, results render
-  - Observers page: table renders with data
-- Validates no JavaScript errors in page scripts (basic syntax check)
-- Validates API calls each page makes return expected data shapes
+### M16: Loading States & Visual Polish ✅
+### M17: Mobile Responsive ✅
+- Fully responsive layout, hamburger menu
+- Touch-friendly controls, viewport fixes
 
-## Dependency Chain
-```
-M1 + M2 (done) → M3 (done) → M4 (SPA+packets) + M5 (map) + M6 (channels) + M7 (nodes) in parallel → M8 (traces) + M9 (observers) → M11 (packet generator) → M12 (e2e test) → M13 (frontend smoke) → M10 (polish)
-```
+### M18: Home Page ✅
+- Hero section, node health cards, prefix search dropdown
+- "Your Nodes" favorites section, "View packets" filtered link
 
-## Sub-Agent Execution
-- Each milestone = one sub-agent
-- M3 is next (depends on M1+M2)
-- After M3: spawn M4, M5, M6, M7 in parallel
-- Cron job checks every 30min, tests milestones, spawns next
+### M19: Analytics Dashboard ✅
+- Deep mesh network insights, charts, activity heatmaps
+
+### M20: Live Page ✅
+- Real-time animated map with contrail trails and shockwave pulses
+- Traveling dots along hop paths, ghost hop interpolation
+- Sound effects per packet type (toggleable)
+- Heat map overlay, packet feed with detail cards
+- Replay button on feed cards
+- Auto-hide nav bar on inactivity
+- Nav bar height-aware layout with Leaflet invalidateSize
+
+### M21: VCR Controls ✅
+- Pause/Play/Rewind/Speed (1x/2x/4x/8x)
+- Buffer-based architecture — WS always stores, display consumes from playhead
+- Option C unpause: "You missed N packets. [▶ Replay] [⏭ Skip to live]"
+- Timeline scrubber with density sparkline, red playhead, click-to-seek
+- Scope selector: 1h / 6h / 12h / 24h
+- Rewind fetches from DB, prepends to buffer
+- Replay uses real timestamp gaps (capped 2s) / speed multiplier
 
 ## File Structure
 ```
 meshcore-analyzer/
 ├── package.json
 ├── config.json         (MQTT broker, channel keys, regions)
-├── server.js           (Express + WS + MQTT + API — all in one)
+├── server.js           (Express + WS + MQTT + API)
 ├── decoder.js          (custom packet decoder)
 ├── db.js               (SQLite schema + queries)
 ├── data/
 │   └── meshcore.db
-└── public/
-    ├── index.html      (SPA shell + nav)
-    ├── style.css       (dark/blue theme)
-    ├── app.js          (router, WS client, utils)
-    ├── packets.js      (packets page + byte breakdown)
-    ├── map.js          (Leaflet map page)
-    ├── channels.js     (chat-style channels page)
-    ├── nodes.js        (node directory + detail panel)
-    ├── traces.js       (packet trace page)
-    └── observers.js    (observer status page)
+├── public/
+│   ├── index.html      (SPA shell + nav)
+│   ├── style.css       (global theme)
+│   ├── app.js          (router, WS client, utils)
+│   ├── home.js/css     (home page)
+│   ├── packets.js      (packets browser)
+│   ├── map.js          (Leaflet map)
+│   ├── channels.js     (channel chat)
+│   ├── nodes.js        (node directory)
+│   ├── traces.js       (packet traces)
+│   ├── observers.js    (observer status)
+│   ├── analytics.js    (analytics dashboard)
+│   ├── live.js/css     (live view + VCR)
+│   └── vendor/         (third-party libs)
+└── tools/
+    ├── generate-packets.js
+    ├── e2e-test.js
+    └── frontend-test.js
 ```
 
-## Test Data
-ADVERT packet (Kpa Roof Solar, 5 hops, 2-byte hashes):
-```
-11451000D818206D3AAC152C8A91F89957E6D30CA51F36E28790228971C473B755F244F718754CF5EE4A2FD58D944466E42CDED140C66D0CC590183E32BAF40F112BE8F3F2BDF6012B4B2793C52F1D36F69EE054D9A05593286F78453E56C0EC4A3EB95DDA2A7543FCCC00B939CACC009278603902FC12BCF84B706120526F6F6620536F6C6172
-```
-
-Default public channel key: `8b3387e9c5cdea6ac9e5edbaa115cd72`
+## Default Test Data
+Public channel key: `8b3387e9c5cdea6ac9e5edbaa115cd72`
