@@ -994,6 +994,7 @@ app.get('/api/channels/:hash/messages', (req, res) => {
         encrypted: !decoded.text && !decoded.sender,
         timestamp: pkt.timestamp,
         sender_timestamp: decoded.sender_timestamp || null,
+        packetId: pkt.id,
         repeats: 1,
         observers: [pkt.observer_name || pkt.observer_id].filter(Boolean),
         hops: decoded.path_len || (pkt.path_json ? JSON.parse(pkt.path_json).length : 0),

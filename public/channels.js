@@ -398,7 +398,7 @@
         <div class="ch-msg-content">
           <div class="ch-msg-sender ch-sender-link ch-tappable" style="color:${senderColor}" data-node="${safeId}">${escapeHtml(sender)}</div>
           <div class="ch-msg-bubble">${displayText}</div>
-          <div class="ch-msg-meta">${meta.join(' · ')}</div>
+          <div class="ch-msg-meta">${meta.join(' · ')}${msg.packetId ? ` · <a href="#/packets/id/${msg.packetId}" class="ch-analyze-link">View packet →</a>` : ''}</div>
         </div>
       </div>`;
     }).join('');
