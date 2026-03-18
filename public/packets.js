@@ -100,10 +100,35 @@
     await loadObservers();
     loadPackets();
 
-    // If linked directly to a packet by ID, load its detail
+    // If linked directly to a packet by ID, load its detail and filter list
     if (directPacketId) {
-      selectPacket(Number(directPacketId));
+      const pktId = Number(directPacketId);
       directPacketId = null;
+      try {
+        const data = await api(`/packets/${pktId}`);
+        if (data.packet?.hash) {
+          filters.hash = data.packet.hash;
+          const hashInput = document.getElementById('fHash');
+          if (hashInput) hashInput.value = filters.hash;
+          await loadPackets();
+        }
+        // Show detail in sidebar
+        const panel = document.getElementById('pktRight');
+        if (panel) {
+          panel.classList.remove('empty');
+          panel.innerHTML = '<div class="panel-resize-handle" id="pktResizeHandle"></div>';
+          const content = document.createElement('div');
+          panel.appendChild(content);
+          const pkt = data.packet;
+          try {
+            const hops = JSON.parse(pkt.path_json || '[]');
+            const newHops = hops.filter(h => !(h in hopNameCache));
+            if (newHops.length) await resolveHops(newHops);
+          } catch {}
+          renderDetail(content, data);
+          initPanelResize();
+        }
+      } catch {}
     }
     wsHandler = (msg) => {
       if (msg.type === 'packet') {
