@@ -43,7 +43,7 @@
       render();
     } catch (e) {
       document.getElementById('obsContent').innerHTML =
-        `<div class="text-muted" style="padding:40px">Error loading observers: ${e.message}</div>`;
+        `<div class="text-muted" role="alert" aria-live="polite" style="padding:40px">Error loading observers: ${e.message}</div>`;
     }
   }
 
