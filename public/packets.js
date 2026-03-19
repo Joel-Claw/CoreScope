@@ -26,39 +26,64 @@
     if (saved) panel.style.width = saved + 'px';
 
     let startX, startW;
-    handle.addEventListener('mousedown', (e) => {
-      e.preventDefault();
-      startX = e.clientX;
+    function startResize(clientX) {
+      startX = clientX;
       startW = panel.offsetWidth;
       handle.classList.add('dragging');
       document.body.style.cursor = 'col-resize';
       document.body.style.userSelect = 'none';
-
-      function onMove(e2) {
-        const w = Math.max(280, Math.min(window.innerWidth * 0.7, startW - (e2.clientX - startX)));
-        panel.style.width = w + 'px';
-        panel.style.minWidth = w + 'px';
-        // Explicitly size left panel so table reflows within it
-        const left = document.getElementById('pktLeft');
-        if (left) {
-          const available = left.parentElement.clientWidth - w;
-          left.style.width = available + 'px';
-        }
+    }
+    function doResize(clientX) {
+      const w = Math.max(280, Math.min(window.innerWidth * 0.7, startW - (clientX - startX)));
+      panel.style.width = w + 'px';
+      panel.style.minWidth = w + 'px';
+      const left = document.getElementById('pktLeft');
+      if (left) {
+        const available = left.parentElement.clientWidth - w;
+        left.style.width = available + 'px';
       }
+    }
+    function endResize() {
+      handle.classList.remove('dragging');
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      localStorage.setItem(PANEL_WIDTH_KEY, panel.offsetWidth);
+      const left = document.getElementById('pktLeft');
+      if (left) left.style.width = '';
+    }
+
+    handle.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      startResize(e.clientX);
+
+      function onMove(e2) { doResize(e2.clientX); }
       function onUp() {
-        handle.classList.remove('dragging');
-        document.body.style.cursor = '';
-        document.body.style.userSelect = '';
-        localStorage.setItem(PANEL_WIDTH_KEY, panel.offsetWidth);
-        // Clear forced widths, let flex take over
-        const left = document.getElementById('pktLeft');
-        if (left) left.style.width = '';
+        endResize();
         document.removeEventListener('mousemove', onMove);
         document.removeEventListener('mouseup', onUp);
       }
       document.addEventListener('mousemove', onMove);
       document.addEventListener('mouseup', onUp);
     });
+
+    handle.addEventListener('touchstart', (e) => {
+      if (e.touches.length !== 1) return;
+      e.preventDefault();
+      startResize(e.touches[0].clientX);
+
+      function onTouchMove(e2) {
+        if (e2.touches.length !== 1) return;
+        e2.preventDefault();
+        doResize(e2.touches[0].clientX);
+      }
+      function onTouchEnd() {
+        endResize();
+        document.removeEventListener('touchmove', onTouchMove);
+        document.removeEventListener('touchend', onTouchEnd);
+      }
+      document.addEventListener('touchmove', onTouchMove, { passive: false });
+      document.addEventListener('touchend', onTouchEnd);
+    }, { passive: false });
   }
 
   // Resolve hop hex prefixes to node names (cached)
@@ -83,7 +108,7 @@
     const title = ambiguous
       ? `${h} — ⚠ ${entry.candidates.length} matches: ${entry.candidates.map(c => c.name).join(', ')}`
       : h;
-    return `<a class="hop hop-link ${name ? 'hop-named' : ''} ${ambiguous ? 'hop-ambiguous' : ''}" href="#/nodes/${encodeURIComponent(pubkey)}" title="${title}" onclick="event.stopPropagation()">${display}${ambiguous ? '<span class="hop-warn">⚠</span>' : ''}</a>`;
+    return `<a class="hop hop-link ${name ? 'hop-named' : ''} ${ambiguous ? 'hop-ambiguous' : ''}" href="#/nodes/${encodeURIComponent(pubkey)}" title="${title}" data-hop-link="true">${display}${ambiguous ? '<span class="hop-warn">⚠</span>' : ''}</a>`;
   }
 
   function renderPath(hops) {
@@ -108,7 +133,7 @@
     }
     app.innerHTML = `<div class="split-layout">
       <div class="panel-left" id="pktLeft"></div>
-      <div class="panel-right empty" id="pktRight">
+      <div class="panel-right empty" id="pktRight" aria-live="polite">
         <div class="panel-resize-handle" id="pktResizeHandle"></div>
         <span>Select a packet to view details</span>
       </div>
@@ -424,6 +449,8 @@
     const pktBody = document.getElementById('pktBody');
     if (pktBody) {
       const handler = (e) => {
+        // Let hop links navigate naturally without selecting the row
+        if (e.target.closest('[data-hop-link]')) return;
         const row = e.target.closest('tr[data-action]');
         if (!row) return;
         if (e.type === 'keydown' && e.key !== 'Enter' && e.key !== ' ') return;
@@ -729,7 +756,7 @@
         const hopName = hopEntry ? (typeof hopEntry === 'string' ? hopEntry : hopEntry.name) : null;
         const hopPubkey = hopEntry?.pubkey || pathHops[i];
         const nameHtml = hopName
-          ? `<a href="#/nodes/${encodeURIComponent(hopPubkey)}" class="hop-link hop-named" onclick="event.stopPropagation()">${escapeHtml(hopName)}</a>${hopEntry?.ambiguous ? ' ⚠' : ''}`
+          ? `<a href="#/nodes/${encodeURIComponent(hopPubkey)}" class="hop-link hop-named" data-hop-link="true">${escapeHtml(hopName)}</a>${hopEntry?.ambiguous ? ' ⚠' : ''}`
           : '';
         const label = hopName ? `Hop ${i} — ${nameHtml}` : `Hop ${i}`;
         rows += fieldRow(off + i * hashSize, label, pathHops[i], '');
