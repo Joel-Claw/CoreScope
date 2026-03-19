@@ -102,12 +102,7 @@
   function vcrUnpause() {
     if (VCR.mode !== 'PAUSED') return;
     if (VCR.scrubTs != null) {
-      // Scrubbed to a specific time — fetch and replay from there
       vcrReplayFromTs(VCR.scrubTs);
-    } else if (VCR.missedCount > 3) {
-      showVCRPrompt(VCR.missedCount);
-    } else if (VCR.missedCount > 0) {
-      vcrReplayMissed();
     } else {
       vcrResumeLive();
     }
@@ -937,6 +932,17 @@
 
     playSound(typeName);
     addFeedItem(icon, typeName, payload, hops, color, pkt);
+
+    // If ADVERT, ensure node appears on map
+    if (typeName === 'ADVERT' && payload.pubKey) {
+      const key = payload.pubKey;
+      if (!nodeMarkers[key] && payload.lat != null && payload.lon != null && !(payload.lat === 0 && payload.lon === 0)) {
+        const n = { public_key: key, name: payload.name || key.slice(0,8), role: payload.role || 'unknown', lat: payload.lat, lon: payload.lon };
+        nodeData[key] = n;
+        addNodeMarker(n);
+        document.getElementById('liveNodeCount').textContent = Object.keys(nodeMarkers).length;
+      }
+    }
 
     const hopPositions = resolveHopPositions(hops, payload);
     if (hopPositions.length === 0) return;
