@@ -92,6 +92,9 @@
     VCR.dragPct = null;
     VCR.scrubTs = null;
     vcrSetMode('LIVE');
+    // Reload all nodes (no time filter)
+    clearNodeMarkers();
+    loadNodes();
     const prompt = document.getElementById('vcrPrompt');
     if (prompt) prompt.classList.add('hidden');
   }
@@ -115,6 +118,11 @@
     const fetchTo = new Date(targetTs + 300000).toISOString(); // 5 min window
     stopReplay();
     vcrSetMode('REPLAY');
+
+    // Reload map nodes to match the replay time
+    clearNodeMarkers();
+    loadNodes(targetTs);
+
     fetch(`/api/packets?limit=200&grouped=false&since=${encodeURIComponent(fetchFrom)}&until=${encodeURIComponent(fetchTo)}`)
       .then(r => r.json())
       .then(data => {
@@ -818,9 +826,12 @@
     }, 2000);
   }
 
-  async function loadNodes() {
+  async function loadNodes(beforeTs) {
     try {
-      const resp = await fetch('/api/nodes?limit=500');
+      const url = beforeTs
+        ? `/api/nodes?limit=500&before=${encodeURIComponent(new Date(beforeTs).toISOString())}`
+        : '/api/nodes?limit=500';
+      const resp = await fetch(url);
       const nodes = await resp.json();
       const list = Array.isArray(nodes) ? nodes : (nodes.nodes || []);
       list.forEach(n => {
@@ -831,6 +842,14 @@
       });
       document.getElementById('liveNodeCount').textContent = Object.keys(nodeMarkers).length;
     } catch (e) { console.error('Failed to load nodes:', e); }
+  }
+
+  function clearNodeMarkers() {
+    for (const [key, marker] of Object.entries(nodeMarkers)) {
+      if (map) map.removeLayer(marker);
+    }
+    nodeMarkers = {};
+    nodeData = {};
   }
 
   function addNodeMarker(n) {
