@@ -384,7 +384,8 @@ app.get('/api/packets', (req, res) => {
   if (until) { where.push('timestamp < @until'); params.until = until; }
   if (node) { where.push("(decoded_json LIKE @nodePattern OR decoded_json LIKE @nodeNamePattern)"); params.nodePattern = `%${node}%`; const nn = db.db.prepare('SELECT name FROM nodes WHERE public_key = ?').get(node); params.nodeNamePattern = nn ? `%${nn.name}%` : `%${node}%`; }
   const clause = where.length ? 'WHERE ' + where.join(' AND ') : '';
-  const packets = db.db.prepare(`SELECT * FROM packets ${clause} ORDER BY timestamp DESC LIMIT @limit OFFSET @offset`).all({ ...params, limit: Number(limit), offset: Number(offset) });
+  const orderDir = req.query.order === 'asc' ? 'ASC' : 'DESC';
+  const packets = db.db.prepare(`SELECT * FROM packets ${clause} ORDER BY timestamp ${orderDir} LIMIT @limit OFFSET @offset`).all({ ...params, limit: Number(limit), offset: Number(offset) });
   const total = db.db.prepare(`SELECT COUNT(*) as count FROM packets ${clause}`).get(params).count;
   res.json({ packets, total });
 });

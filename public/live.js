@@ -120,11 +120,11 @@
     clearNodeMarkers();
     loadNodes(targetTs);
 
-    // Fetch ALL packets from scrub point to now (no limit, no until)
-    fetch(`/api/packets?limit=10000&grouped=false&since=${encodeURIComponent(fetchFrom)}`)
+    // Fetch packets from scrub point forward (ASC order, no limit clipping from the wrong end)
+    fetch(`/api/packets?limit=10000&grouped=false&since=${encodeURIComponent(fetchFrom)}&order=asc`)
       .then(r => r.json())
       .then(data => {
-        const pkts = (data.packets || []).reverse(); // chronological order
+        const pkts = data.packets || []; // already ASC from server
         const replayEntries = pkts.map(p => ({
           ts: new Date(p.timestamp || p.created_at).getTime(),
           pkt: dbPacketToLive(p)
@@ -1396,10 +1396,6 @@
     });
     const feedEl = document.getElementById('liveFeed');
     if (feedEl) feedEl.parentElement.appendChild(card);
-  }
-
-  function escapeHtml(s) {
-    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   }
 
   function destroy() {
