@@ -93,7 +93,14 @@
       const recent = h.recentPackets || [];
       const lastHeard = stats.lastHeard;
       const statusAge = lastHeard ? (Date.now() - new Date(lastHeard).getTime()) : Infinity;
-      const statusLabel = statusAge < 3600000 ? '🟢 Active' : statusAge < 86400000 ? '🟡 Degraded' : '🔴 Silent';
+      // Thresholds based on MeshCore advert intervals:
+      // Repeaters/rooms: flood advert every 12-24h, so degraded after 24h, silent after 72h
+      // Companions/sensors: user-initiated adverts, shorter thresholds
+      const role = (n.role || '').toLowerCase();
+      const isInfra = role === 'repeater' || role === 'room';
+      const degradedMs = isInfra ? 86400000 : 3600000;   // 24h : 1h
+      const silentMs = isInfra ? 259200000 : 86400000;    // 72h : 24h
+      const statusLabel = statusAge < degradedMs ? '🟢 Active' : statusAge < silentMs ? '🟡 Degraded' : '🔴 Silent';
 
       body.innerHTML = `
         ${hasLoc ? `<div id="nodeFullMap" class="node-detail-map" style="border-radius:8px;overflow:hidden;margin-bottom:16px"></div>` : ''}
