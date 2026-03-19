@@ -561,8 +561,12 @@
       for (let i = 0; i < pathHops.length; i++) {
         const hopEntry = hopNameCache[pathHops[i]];
         const hopName = hopEntry ? (typeof hopEntry === 'string' ? hopEntry : hopEntry.name) : null;
-        const label = hopName ? `Hop ${i} — ${escapeHtml(hopName)}${hopEntry?.ambiguous ? ' ⚠' : ''}` : `Hop ${i}`;
-        rows += fieldRow(off + i * hashSize, label, pathHops[i], hopName ? hopName : '');
+        const hopPubkey = hopEntry?.pubkey || pathHops[i];
+        const nameHtml = hopName
+          ? `<a href="#/nodes/${encodeURIComponent(hopPubkey)}" class="hop-link hop-named" onclick="event.stopPropagation()">${escapeHtml(hopName)}</a>${hopEntry?.ambiguous ? ' ⚠' : ''}`
+          : '';
+        const label = hopName ? `Hop ${i} — ${nameHtml}` : `Hop ${i}`;
+        rows += fieldRow(off + i * hashSize, label, pathHops[i], '');
       }
       off += hashSize * pathHops.length;
     }
