@@ -112,26 +112,27 @@
 
   function vcrReplayFromTs(targetTs) {
     const fetchFrom = new Date(targetTs - 5000).toISOString();
+    stopReplay();
     vcrSetMode('REPLAY');
     fetch(`/api/packets?limit=200&grouped=false&since=${encodeURIComponent(fetchFrom)}`)
       .then(r => r.json())
       .then(data => {
         const pkts = (data.packets || []).reverse();
-        const existingIds = new Set(VCR.buffer.map(b => b.pkt.id).filter(Boolean));
-        const newEntries = pkts.filter(p => !existingIds.has(p.id)).map(p => ({
+        // Build a fresh replay buffer from ONLY the fetched packets
+        const replayEntries = pkts.map(p => ({
           ts: new Date(p.timestamp || p.created_at).getTime(),
           pkt: dbPacketToLive(p)
         }));
-        if (newEntries.length) {
-          VCR.buffer = [...newEntries, ...VCR.buffer].sort((a, b) => a.ts - b.ts);
+        if (replayEntries.length === 0) {
+          vcrSetMode('PAUSED');
+          return;
         }
-        let closest = 0, minDist = Infinity;
-        VCR.buffer.forEach((entry, i) => {
-          const dist = Math.abs(entry.ts - targetTs);
-          if (dist < minDist) { minDist = dist; closest = i; }
-        });
-        VCR.playhead = closest;
-        VCR.scrubEnd = Math.min(closest + 50, VCR.buffer.length);
+        // Replace buffer with fetched packets for clean replay
+        // (keep existing buffer entries that are newer for when we resume live)
+        const oldNew = VCR.buffer.filter(b => b.ts > replayEntries[replayEntries.length - 1].ts);
+        VCR.buffer = [...replayEntries, ...oldNew];
+        VCR.playhead = 0; // start from first fetched packet
+        VCR.scrubEnd = replayEntries.length;
         VCR.scrubTs = null;
         startReplay();
       })
@@ -635,11 +636,10 @@
     function scrubRelease() {
       VCR.dragging = false;
       VCR.frozenNow = Date.now();
-      stopReplay();
-      // Store the target timestamp so playhead stays put
-      VCR.scrubTs = VCR.frozenNow - VCR.timelineScope + VCR.dragPct * VCR.timelineScope;
-      vcrSetMode('PAUSED');
-      updateVCRClock(VCR.scrubTs);
+      const targetTs = VCR.frozenNow - VCR.timelineScope + VCR.dragPct * VCR.timelineScope;
+      VCR.scrubTs = targetTs;
+      updateVCRClock(targetTs);
+      vcrReplayFromTs(targetTs);
     }
 
     timelineEl.addEventListener('mousedown', (e) => {
