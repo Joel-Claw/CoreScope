@@ -150,7 +150,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 .nav-stats .stat-val.updated { color: var(--accent); }
 
 /* === Layout === */
-#app { height: calc(100vh - 52px); overflow: hidden; }
+#app { height: calc(100vh - 52px); height: calc(100dvh - 52px); overflow: hidden; }
 
 .split-layout {
   display: flex; height: 100%; overflow: hidden;

@@ -67,7 +67,11 @@
       resizeTimer = setTimeout(() => { if (map) map.invalidateSize({ animate: false }); }, 150);
     };
     window.addEventListener('resize', _onResize);
-    window.addEventListener('orientationchange', () => setTimeout(_onResize, 200));
+    window.addEventListener('orientationchange', () => {
+      setTimeout(_onResize, 200);
+      setTimeout(_onResize, 600);
+      setTimeout(_onResize, 1200);
+    });
   }
 
   // === VCR Controls ===
