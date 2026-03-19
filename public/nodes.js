@@ -108,6 +108,7 @@
           <div class="node-detail-name" style="font-size:20px">${escapeHtml(n.name || '(unnamed)')}</div>
           <div style="margin:6px 0 12px"><span class="badge" style="background:${roleColor}20;color:${roleColor}">${n.role}</span> ${statusLabel}</div>
           <div class="node-detail-key mono" style="font-size:11px;word-break:break-all;margin-bottom:12px">${n.public_key}</div>
+          <div class="node-qr" id="nodeFullQrCode"></div>
         </div>
 
         <div class="node-full-card">
@@ -181,6 +182,22 @@
           setTimeout(() => btn.textContent = '📋 Copy URL', 2000);
         }).catch(() => {});
       });
+
+      // QR code for full-screen view
+      const qrFullEl = document.getElementById('nodeFullQrCode');
+      if (qrFullEl && typeof qrcode === 'function') {
+        try {
+          const typeMap = { companion: 1, repeater: 2, room: 3, sensor: 4 };
+          const contactType = typeMap[(n.role || '').toLowerCase()] || 2;
+          const meshcoreUrl = `meshcore://contact/add?name=${encodeURIComponent(n.name || 'Unknown')}&public_key=${n.public_key}&type=${contactType}`;
+          const qr = qrcode(0, 'M');
+          qr.addData(meshcoreUrl);
+          qr.make();
+          qrFullEl.innerHTML = `<div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">Scan with MeshCore app to add contact</div>` + qr.createSvgTag(3, 0);
+          const svg = qrFullEl.querySelector('svg');
+          if (svg) { svg.style.display = 'block'; svg.style.margin = '0 auto'; }
+        } catch {}
+      }
 
     } catch (e) {
       body.innerHTML = `<div class="text-muted" style="padding:40px">Failed to load node: ${e.message}</div>`;
