@@ -23,6 +23,8 @@
     speed: 1,            // replay speed: 1, 2, 4, 8
     replayTimer: null,
     timelineScope: 3600000, // 1h default ms
+    timelineTimestamps: [], // historical timestamps from DB for sparkline
+    timelineFetchedScope: 0, // last fetched scope to avoid redundant fetches
   };
 
   const ROLE_COLORS = {
@@ -260,6 +262,20 @@
 
   // === Timeline ===
 
+  async function fetchTimelineTimestamps() {
+    const scopeMs = VCR.timelineScope;
+    if (scopeMs === VCR.timelineFetchedScope) return;
+    const since = new Date(Date.now() - scopeMs).toISOString();
+    try {
+      const resp = await fetch(`/api/packets/timestamps?since=${encodeURIComponent(since)}`);
+      if (resp.ok) {
+        const timestamps = await resp.json(); // array of ISO strings
+        VCR.timelineTimestamps = timestamps.map(t => new Date(t).getTime());
+        VCR.timelineFetchedScope = scopeMs;
+      }
+    } catch(e) { /* ignore */ }
+  }
+
   function updateTimeline() {
     const canvas = document.getElementById('vcrTimeline');
     if (!canvas) return;
@@ -272,19 +288,27 @@
 
     ctx.clearRect(0, 0, cw, ch);
 
-    if (VCR.buffer.length === 0) return;
-
     const now = Date.now();
     const scopeMs = VCR.timelineScope;
     const startTs = now - scopeMs;
+
+    // Merge historical DB timestamps with live buffer timestamps
+    const allTimestamps = [];
+    VCR.timelineTimestamps.forEach(ts => {
+      if (ts >= startTs) allTimestamps.push(ts);
+    });
+    VCR.buffer.forEach(entry => {
+      if (entry.ts >= startTs) allTimestamps.push(entry.ts);
+    });
+
+    if (allTimestamps.length === 0) return;
 
     // Draw density sparkline
     const buckets = 100;
     const counts = new Array(buckets).fill(0);
     let maxCount = 0;
-    VCR.buffer.forEach(entry => {
-      if (entry.ts < startTs) return;
-      const bucket = Math.floor((entry.ts - startTs) / scopeMs * buckets);
+    allTimestamps.forEach(ts => {
+      const bucket = Math.floor((ts - startTs) / scopeMs * buckets);
       if (bucket >= 0 && bucket < buckets) {
         counts[bucket]++;
         if (counts[bucket] > maxCount) maxCount = counts[bucket];
@@ -516,7 +540,7 @@
         document.querySelectorAll('.vcr-scope-btn').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
         VCR.timelineScope = parseInt(btn.dataset.scope);
-        updateTimeline();
+        fetchTimelineTimestamps().then(() => updateTimeline());
       });
     });
 
@@ -537,8 +561,13 @@
     });
     timelineEl.addEventListener('mouseleave', () => { timeTooltip.classList.add('hidden'); });
 
-    // Refresh timeline periodically
-    setInterval(updateTimeline, 5000);
+    // Fetch historical timestamps for timeline, then start refresh
+    fetchTimelineTimestamps().then(() => updateTimeline());
+    setInterval(() => {
+      // Re-fetch if scope changed or periodically to pick up new data
+      VCR.timelineFetchedScope = 0; // force refetch
+      fetchTimelineTimestamps().then(() => updateTimeline());
+    }, 30000);
 
     // Auto-hide nav
     const topNav = document.querySelector('.top-nav');

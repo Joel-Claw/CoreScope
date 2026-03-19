@@ -310,6 +310,14 @@ app.get('/api/packets', (req, res) => {
   res.json({ packets, total });
 });
 
+// Lightweight endpoint: just timestamps for timeline sparkline
+app.get('/api/packets/timestamps', (req, res) => {
+  const { since } = req.query;
+  if (!since) return res.status(400).json({ error: 'since required' });
+  const rows = db.db.prepare('SELECT timestamp FROM packets WHERE timestamp > ? ORDER BY timestamp ASC').all(since);
+  res.json(rows.map(r => r.timestamp));
+});
+
 app.get('/api/packets/:id', (req, res) => {
   const packet = db.getPacket(Number(req.params.id));
   if (!packet) return res.status(404).json({ error: 'Not found' });
