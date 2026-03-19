@@ -455,13 +455,14 @@ app.post('/api/packets', (req, res) => {
 });
 
 app.get('/api/nodes', (req, res) => {
-  const { limit = 50, offset = 0, role, region, lastHeard, sortBy = 'lastSeen', search } = req.query;
+  const { limit = 50, offset = 0, role, region, lastHeard, sortBy = 'lastSeen', search, before } = req.query;
 
   let where = [];
   let params = {};
 
   if (role) { where.push('role = @role'); params.role = role; }
   if (search) { where.push('name LIKE @search'); params.search = `%${search}%`; }
+  if (before) { where.push('first_seen <= @before'); params.before = before; }
   if (lastHeard) {
     const durations = { '1h': 3600000, '6h': 21600000, '24h': 86400000, '7d': 604800000, '30d': 2592000000 };
     const ms = durations[lastHeard];
