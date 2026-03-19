@@ -4,6 +4,7 @@
 (function () {
   let searchTimeout = null;
   let miniMap = null;
+  let searchAbort = null; // AbortController for document-level listeners
 
   const PREF_KEY = 'meshcore-user-level';
   const MY_NODES_KEY = 'meshcore-my-nodes'; // [{pubkey, name, addedAt}]
@@ -190,7 +191,10 @@
       loadHealth(item.dataset.key);
     });
 
-    document.addEventListener('click', handleOutsideClick);
+    // Use AbortController so re-calling setupSearch won't stack listeners
+    if (searchAbort) searchAbort.abort();
+    searchAbort = new AbortController();
+    document.addEventListener('click', handleOutsideClick, { signal: searchAbort.signal });
   }
 
   function handleOutsideClick(e) {
@@ -200,7 +204,7 @@
 
   function destroy() {
     clearTimeout(searchTimeout);
-    document.removeEventListener('click', handleOutsideClick);
+    if (searchAbort) { searchAbort.abort(); searchAbort = null; }
     if (miniMap) { miniMap.remove(); miniMap = null; }
   }
 

@@ -13,6 +13,7 @@
   let totalCount = 0;
   let expandedHashes = new Set();
   let hopNameCache = {};
+  let filtersBuilt = false;
   const PANEL_WIDTH_KEY = 'meshcore-panel-width';
 
   function initPanelResize() {
@@ -147,6 +148,7 @@
     wsHandler = null;
     packets = [];
     selectedId = null;
+    filtersBuilt = false;
     delete filters.node;
   }
 
@@ -204,6 +206,13 @@
   function renderLeft() {
     const el = document.getElementById('pktLeft');
     if (!el) return;
+
+    // Only build the filter bar + table skeleton once; subsequent calls just update rows
+    if (filtersBuilt) {
+      renderTableRows();
+      return;
+    }
+    filtersBuilt = true;
 
     el.innerHTML = `
       <div class="page-header">
@@ -315,6 +324,12 @@
   function renderTableRows() {
     const tbody = document.getElementById('pktBody');
     if (!tbody) return;
+
+    // Update dynamic parts of the header
+    const countEl = document.querySelector('#pktLeft .count');
+    if (countEl) countEl.textContent = `(${totalCount})`;
+    const groupBtn = document.getElementById('fGroup');
+    if (groupBtn) groupBtn.classList.toggle('active', groupByHash);
 
     if (groupByHash) {
       let html = '';
