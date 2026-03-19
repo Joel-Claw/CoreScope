@@ -90,6 +90,7 @@
     VCR.missedCount = 0;
     VCR.scrubEnd = null;
     VCR.dragPct = null;
+    VCR.scrubTs = null;
     vcrSetMode('LIVE');
     const prompt = document.getElementById('vcrPrompt');
     if (prompt) prompt.classList.add('hidden');
@@ -360,6 +361,9 @@
     let x;
     if (VCR.mode === 'LIVE') {
       x = cw;
+    } else if (VCR.scrubTs != null) {
+      // Scrubbed to a specific time — hold there
+      x = ((VCR.scrubTs - startTs) / scopeMs) * cw;
     } else if (VCR.playhead >= 0 && VCR.playhead < VCR.buffer.length) {
       const playTs = VCR.buffer[VCR.playhead].ts;
       x = ((playTs - startTs) / scopeMs) * cw;
@@ -594,49 +598,26 @@
       VCR.dragPct = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
       const playheadEl = document.getElementById('vcrPlayhead');
       if (playheadEl) playheadEl.style.left = (VCR.dragPct * rect.width) + 'px';
-      // Update VCR clock to show drag target time
       const now = VCR.frozenNow || Date.now();
       const targetTs = now - VCR.timelineScope + VCR.dragPct * VCR.timelineScope;
       updateVCRClock(targetTs);
     }
 
-    function scrubCommit() {
-      VCR.frozenNow = Date.now(); // freeze timeline at scrub moment
-      const targetTs = VCR.frozenNow - VCR.timelineScope + VCR.dragPct * VCR.timelineScope;
-
+    function scrubRelease() {
+      VCR.dragging = false;
+      VCR.frozenNow = Date.now();
       stopReplay();
-      vcrSetMode('REPLAY');
-      const fetchFrom = new Date(targetTs - 30000).toISOString(); // 30s before target
-      fetch(`/api/packets?limit=200&grouped=false&since=${encodeURIComponent(fetchFrom)}`)
-        .then(r => r.json())
-        .then(data => {
-          const pkts = (data.packets || []).reverse(); // oldest first
-          const existingIds = new Set(VCR.buffer.map(b => b.pkt.id).filter(Boolean));
-          const newEntries = pkts.filter(p => !existingIds.has(p.id)).map(p => ({
-            ts: new Date(p.timestamp || p.created_at).getTime(),
-            pkt: dbPacketToLive(p)
-          }));
-          if (newEntries.length) {
-            VCR.buffer = [...newEntries, ...VCR.buffer].sort((a,b) => a.ts - b.ts);
-          }
-          // Find closest entry to target timestamp
-          let closest = 0, minDist = Infinity;
-          VCR.buffer.forEach((entry, i) => {
-            const dist = Math.abs(entry.ts - targetTs);
-            if (dist < minDist) { minDist = dist; closest = i; }
-          });
-          VCR.playhead = closest;
-          // Only replay ~50 packets from scrub point, not entire buffer to end
-          VCR.scrubEnd = Math.min(closest + 50, VCR.buffer.length);
-          VCR.dragging = false;
-          startReplay();
-        })
-        .catch(() => { VCR.dragging = false; });
+      // Store the target timestamp so playhead stays put
+      VCR.scrubTs = VCR.frozenNow - VCR.timelineScope + VCR.dragPct * VCR.timelineScope;
+      vcrSetMode('PAUSED');
+      updateVCRClock(VCR.scrubTs);
     }
 
     timelineEl.addEventListener('mousedown', (e) => {
       VCR.dragging = true;
+      VCR.scrubTs = null;
       stopReplay();
+      if (!VCR.frozenNow) VCR.frozenNow = Date.now();
       scrubVisual(e.clientX);
       e.preventDefault();
     });
@@ -646,12 +627,13 @@
     });
     document.addEventListener('mouseup', () => {
       if (!VCR.dragging) return;
-      scrubCommit(); // keeps VCR.dragging=true until fetch completes
+      scrubRelease();
     });
-    // Touch support
     timelineEl.addEventListener('touchstart', (e) => {
       VCR.dragging = true;
+      VCR.scrubTs = null;
       stopReplay();
+      if (!VCR.frozenNow) VCR.frozenNow = Date.now();
       scrubVisual(e.touches[0].clientX);
       e.preventDefault();
     }, { passive: false });
@@ -661,7 +643,7 @@
     });
     timelineEl.addEventListener('touchend', () => {
       if (!VCR.dragging) return;
-      scrubCommit(); // keeps VCR.dragging=true until fetch completes
+      scrubRelease();
     });
 
     // Fetch historical timestamps for timeline, then start refresh
