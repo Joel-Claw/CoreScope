@@ -80,6 +80,28 @@ docker --version
 
 ## Quick Start
 
+The easiest way — use the management script:
+
+```bash
+git clone https://github.com/Kpa-clawbot/meshcore-analyzer.git
+cd meshcore-analyzer
+./manage.sh setup
+```
+
+It walks you through everything: checks Docker, creates config, asks for your domain, checks DNS, builds, and starts.
+
+After setup, manage with:
+```bash
+./manage.sh status       # Check if everything's running
+./manage.sh logs         # View logs
+./manage.sh backup       # Backup the database
+./manage.sh update       # Pull latest + rebuild + restart
+./manage.sh mqtt-test    # Check if MQTT data is flowing
+./manage.sh help         # All commands
+```
+
+### Manual setup
+
 ```mermaid
 flowchart LR
     A[Clone repo] --> B[Create config] --> C[Create Caddyfile] --> D[Build & run] --> E[Open site]
