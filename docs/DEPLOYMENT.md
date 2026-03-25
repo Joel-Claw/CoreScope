@@ -264,23 +264,31 @@ The built-in MQTT broker (Mosquitto) runs on port 1883 with **anonymous access e
 
 ### ⚠️ Database backups
 
-Your packet data lives in `/app/data/meshcore.db` (a SQLite file inside the `meshcore-data` Docker volume). If the volume is deleted, all data is gone.
+Your packet data lives in `meshcore.db` inside the `meshcore-data` Docker volume. If the volume is deleted, all data is gone.
 
-**Backup regularly:**
+**Find your database file:**
 
 ```bash
-# Copy the database out of the container
-docker cp meshcore-analyzer:/app/data/meshcore.db ./meshcore-backup-$(date +%Y%m%d).db
+# Show where Docker stores the volume on disk
+docker volume inspect meshcore-data --format '{{ .Mountpoint }}'
+# e.g., /var/lib/docker/volumes/meshcore-data/_data/meshcore.db
+```
+
+**Back it up:**
+
+```bash
+# Copy the DB to a backup location
+cp $(docker volume inspect meshcore-data --format '{{ .Mountpoint }}')/meshcore.db ~/meshcore-backup-$(date +%Y%m%d).db
 ```
 
 **Automate with cron (recommended):**
 
 ```bash
 # Add to crontab: daily backup at 3am
-0 3 * * * docker cp meshcore-analyzer:/app/data/meshcore.db /home/youruser/backups/meshcore-$(date +\%Y\%m\%d).db
+0 3 * * * cp $(docker volume inspect meshcore-data --format '\{\{ .Mountpoint \}\}')/meshcore.db /home/youruser/backups/meshcore-$(date +\%Y\%m\%d).db
 ```
 
-Keep at least 7 days of backups. SQLite files are portable — you can copy them to another machine and restore by simply placing the file back.
+**Tip:** If you'd rather mount a local directory instead of a Docker volume (easier to find and back up), replace `-v meshcore-data:/app/data` with `-v ./analyzer-data:/app/data` in the docker run command.
 
 ### ⚠️ Domain DNS must be configured BEFORE starting the container
 
