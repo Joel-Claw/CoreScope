@@ -1,4 +1,4 @@
-# MeshCore Analyzer — API Contract Specification
+# CoreScope — API Contract Specification
 
 > **Authoritative contract.** Both the Node.js and Go backends MUST conform to this spec.
 > The frontend relies on these exact shapes. Breaking changes require a spec update first.
@@ -1547,7 +1547,7 @@ Theme and branding configuration (merged from config.json + theme.json).
 ```jsonc
 {
   "branding": {
-    "siteName": string,          // default: "MeshCore Analyzer"
+    "siteName": string,          // default: "CoreScope"
     "tagline":  string           // default: "Real-time MeshCore LoRa mesh network analyzer"
     // ... additional branding keys from config/theme files
   },

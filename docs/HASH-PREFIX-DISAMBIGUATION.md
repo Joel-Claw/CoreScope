@@ -1,4 +1,4 @@
-# Hash Prefix Disambiguation in MeshCore Analyzer
+# Hash Prefix Disambiguation in CoreScope
 
 ## Section 1: Executive Summary
 

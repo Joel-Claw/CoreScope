@@ -1,6 +1,6 @@
 # Migrating from Node.js to Go Engine
 
-Guide for existing MeshCore Analyzer users switching from the Node.js Docker image to the Go version.
+Guide for existing CoreScope users switching from the Node.js Docker image to the Go version.
 
 > **Status (July 2025):** The Go engine is fully functional for production use.
 > Go images are **not yet published to Docker Hub** — you build locally from source.
@@ -24,11 +24,11 @@ Guide for existing MeshCore Analyzer users switching from the Node.js Docker ima
 ## Prerequisites
 
 - **Docker** 20.10+ and **Docker Compose** v2 (verify: `docker compose version`)
-- An existing MeshCore Analyzer deployment running the Node.js image
+- An existing CoreScope deployment running the Node.js image
 - The repository cloned locally (needed to build the Go image):
   ```bash
-  git clone https://github.com/meshcore-dev/meshcore-analyzer.git
-  cd meshcore-analyzer
+  git clone https://github.com/Kpa-clawbot/meshcore-analyzer.git
+  cd corescope
   git pull   # get latest
   ```
 - Your `config.json` and `caddy-config/Caddyfile` in place (the same ones you use now)
@@ -122,7 +122,7 @@ docker compose --profile staging-go build staging-go
 Or build directly:
 
 ```bash
-docker build -f Dockerfile.go -t meshcore-go:latest \
+docker build -f Dockerfile.go -t corescope-go:latest \
   --build-arg APP_VERSION=$(git describe --tags 2>/dev/null || echo unknown) \
   --build-arg GIT_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo unknown) \
   .
@@ -151,7 +151,7 @@ Once satisfied, update `docker-compose.yml` to use the Go image for prod:
 ```yaml
 services:
   prod:
-    image: meshcore-go:latest          # was: meshcore-analyzer:latest
+    image: corescope-go:latest          # was: corescope:latest
     build:
       context: .
       dockerfile: Dockerfile.go        # add this
@@ -174,9 +174,9 @@ docker compose up -d prod
 ./manage.sh stop
 
 # Build the Go image
-docker build -f Dockerfile.go -t meshcore-analyzer:latest .
+docker build -f Dockerfile.go -t corescope:latest .
 
-# Start (manage.sh uses the meshcore-analyzer:latest image)
+# Start (manage.sh uses the corescope:latest image)
 ./manage.sh start
 ```
 
@@ -248,7 +248,7 @@ These should match (or be close to) your pre-migration numbers.
 
 ```bash
 # Watch container logs for MQTT messages
-docker logs -f meshcore-prod --tail 20
+docker logs -f corescope-prod --tail 20
 
 # Or use manage.sh
 ./manage.sh mqtt-test
@@ -279,13 +279,13 @@ If something goes wrong, switching back is straightforward:
 ```yaml
 services:
   prod:
-    image: meshcore-analyzer:latest    # back to Node.js
+    image: corescope:latest    # back to Node.js
     # Remove the build.dockerfile line if you added it
 ```
 
 ```bash
 # Rebuild Node.js image if needed
-docker build -t meshcore-analyzer:latest .
+docker build -t corescope:latest .
 
 docker compose up -d --force-recreate prod
 ```
@@ -295,8 +295,8 @@ docker compose up -d --force-recreate prod
 ```bash
 ./manage.sh stop
 
-# Rebuild Node.js image (overwrites the meshcore-analyzer:latest tag)
-docker build -t meshcore-analyzer:latest .
+# Rebuild Node.js image (overwrites the corescope:latest tag)
+docker build -t corescope:latest .
 
 ./manage.sh start
 ```
@@ -310,9 +310,9 @@ docker build -t meshcore-analyzer:latest .
 Or manually:
 
 ```bash
-docker stop meshcore-prod
+docker stop corescope-prod
 cp backups/pre-go-migration/meshcore.db ~/meshcore-data/meshcore.db
-docker start meshcore-prod
+docker start corescope-prod
 ```
 
 ---
@@ -348,7 +348,7 @@ docker start meshcore-prod
 |------|---------|-----|
 | `engine` field in `/api/health` | Not present or `"node"` | Always `"go"` |
 | MQTT URL scheme | Uses `mqtt://` / `mqtts://` natively | Auto-converts to `tcp://` / `ssl://` (transparent) |
-| Process model | Single Node.js process (server + ingestor) | Two binaries: `meshcore-ingestor` + `meshcore-server` (managed by supervisord) |
+| Process model | Single Node.js process (server + ingestor) | Two binaries: `corescope-ingestor` + `corescope-server` (managed by supervisord) |
 | Memory management | Configurable via `packetStore.maxMemoryMB` | Loads all packets; no configurable limit |
 | Startup time | Faster (no compilation) | Slightly slower (loads all packets from DB into memory) |
 
@@ -393,4 +393,4 @@ The following gaps have been identified. Check the GitHub issue tracker for curr
 
 3. **Go ingestor missing `meshcore/self_info` handling** — The local node identity topic is not processed. Low impact but breaks parity.
 
-4. **No Docker Hub publishing for Go images** — Users must build locally. CI/CD pipeline should publish `meshcore-go:latest` alongside the Node.js image.
+4. **No Docker Hub publishing for Go images** — Users must build locally. CI/CD pipeline should publish `corescope-go:latest` alongside the Node.js image.

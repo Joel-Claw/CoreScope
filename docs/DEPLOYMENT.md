@@ -1,6 +1,6 @@
-# Deploying MeshCore Analyzer
+# Deploying CoreScope
 
-Get MeshCore Analyzer running with automatic HTTPS on your own server.
+Get CoreScope running with automatic HTTPS on your own server.
 
 ## Table of Contents
 
@@ -19,7 +19,7 @@ Get MeshCore Analyzer running with automatic HTTPS on your own server.
 
 ## What You'll End Up With
 
-- MeshCore Analyzer running at `https://your-domain.com`
+- CoreScope running at `https://your-domain.com`
 - Automatic HTTPS certificates (via Let's Encrypt + Caddy)
 - Built-in MQTT broker for receiving packets from observers
 - SQLite database for packet storage (auto-created)
@@ -83,8 +83,8 @@ docker --version
 The easiest way — use the management script:
 
 ```bash
-git clone https://github.com/Kpa-clawbot/meshcore-analyzer.git
-cd meshcore-analyzer
+git clone https://github.com/Kpa-clawbot/corescope.git
+cd corescope
 ./manage.sh setup
 ```
 
@@ -111,8 +111,8 @@ flowchart LR
 ### 1. Download the code
 
 ```bash
-git clone https://github.com/Kpa-clawbot/meshcore-analyzer.git
-cd meshcore-analyzer
+git clone https://github.com/Kpa-clawbot/corescope.git
+cd corescope
 ```
 
 ### 2. Create your config
@@ -153,10 +153,10 @@ Save and close. Caddy handles certificates, renewals, and HTTP→HTTPS redirects
 ### 4. Build and run
 
 ```bash
-docker build -t meshcore-analyzer .
+docker build -t corescope .
 
 docker run -d \
-  --name meshcore-analyzer \
+  --name corescope \
   --restart unless-stopped \
   -p 80:80 \
   -p 443:443 \
@@ -164,7 +164,7 @@ docker run -d \
   -v $(pwd)/caddy-config/Caddyfile:/etc/caddy/Caddyfile:ro \
   -v meshcore-data:/app/data \
   -v caddy-data:/data/caddy \
-  meshcore-analyzer
+  corescope
 ```
 
 What each flag does:
@@ -184,12 +184,12 @@ Open `https://your-domain.com`. You should see the analyzer home page.
 
 Check the logs:
 ```bash
-docker logs meshcore-analyzer
+docker logs corescope
 ```
 
 Expected output:
 ```
-MeshCore Analyzer running on http://localhost:3000
+CoreScope running on http://localhost:3000
 MQTT [local] connected to mqtt://localhost:1883
 [pre-warm] 12 endpoints in XXXms
 ```
@@ -215,7 +215,7 @@ Add a remote broker to `mqttSources` in your `config.json`:
 }
 ```
 
-Restart: `docker restart meshcore-analyzer`
+Restart: `docker restart corescope`
 
 ### Option B: Run your own observer
 
@@ -271,12 +271,12 @@ If you already run a reverse proxy, skip Caddy entirely and proxy directly to th
 
 ```bash
 docker run -d \
-  --name meshcore-analyzer \
+  --name corescope \
   --restart unless-stopped \
   -p 3000:3000 \
   -v $(pwd)/config.json:/app/config.json:ro \
   -v meshcore-data:/app/data \
-  meshcore-analyzer
+  corescope
 ```
 
 Then configure your existing proxy to forward traffic to `localhost:3000`.
@@ -287,12 +287,12 @@ For local testing or a LAN-only setup, use the default Caddyfile that ships in t
 
 ```bash
 docker run -d \
-  --name meshcore-analyzer \
+  --name corescope \
   --restart unless-stopped \
   -p 80:80 \
   -v $(pwd)/config.json:/app/config.json:ro \
   -v meshcore-data:/app/data \
-  meshcore-analyzer
+  corescope
 ```
 
 ## MQTT Security
@@ -315,7 +315,7 @@ password_file /etc/mosquitto/passwd
 ```
 After starting the container, create users:
 ```bash
-docker exec -it meshcore-analyzer mosquitto_passwd -c /etc/mosquitto/passwd myuser
+docker exec -it corescope mosquitto_passwd -c /etc/mosquitto/passwd myuser
 ```
 
 **Option 3: Use TLS** — For production, configure Mosquitto with TLS certificates. See the [Mosquitto docs](https://mosquitto.org/man/mosquitto-conf-5.html).
@@ -331,7 +331,7 @@ Packet data is stored in `meshcore.db` inside the data volume.
 **Using manage.sh (easiest):**
 
 ```bash
-./manage.sh backup                          # Saves to ./backups/meshcore-TIMESTAMP.db
+./manage.sh backup                          # Saves to ./backups/corescope-TIMESTAMP/
 ./manage.sh backup ~/my-backup.db           # Custom path
 ./manage.sh restore ./backups/some-file.db  # Restore (backs up current DB first)
 ```
@@ -345,7 +345,7 @@ If you used `-v ./analyzer-data:/app/data` instead of a Docker volume, the datab
 ```bash
 crontab -e
 # Add:
-0 3 * * * cd /path/to/meshcore-analyzer && ./manage.sh backup
+0 3 * * * cd /path/to/corescope && ./manage.sh backup
 ```
 
 ## Updating
@@ -398,11 +398,11 @@ Center the map on your area in `config.json`:
 
 | Problem | Likely cause | Fix |
 |---------|-------------|-----|
-| Site shows "connection refused" | Container not running | `docker ps` to check, `docker logs meshcore-analyzer` for errors |
+| Site shows "connection refused" | Container not running | `docker ps` to check, `docker logs corescope` for errors |
 | HTTPS not working | Port 80 blocked | Open port 80 — Caddy needs it for ACME challenges |
 | "too many certificates" error | Let's Encrypt rate limit (5/domain/week) | Use a different subdomain, bring your own cert, or wait a week |
 | Certificate won't provision | DNS not pointed at server | `dig your-domain` must show your server IP before starting |
-| No packets appearing | No observer connected | `docker exec meshcore-analyzer mosquitto_sub -t 'meshcore/#' -C 1 -W 10` — if silent, no data is coming in |
+| No packets appearing | No observer connected | `docker exec corescope mosquitto_sub -t 'meshcore/#' -C 1 -W 10` — if silent, no data is coming in |
 | Container crashes on startup | Bad JSON in config | `python3 -c "import json; json.load(open('config.json'))"` to validate |
 | "address already in use" | Another web server on 80/443 | Stop it: `sudo systemctl stop nginx apache2` |
 | Slow on Raspberry Pi | First build is slow | Normal — subsequent builds use cache. Runtime performance is fine. |

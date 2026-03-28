@@ -27,7 +27,7 @@ No restart needed. The server picks up changes to `theme.json` on every page loa
 **Bare metal / PM2 / systemd:**
 ```bash
 # Same directory as server.js and config.json
-cp theme.json /path/to/meshcore-analyzer/
+cp theme.json /path/to/corescope/
 ```
 
 Check the server logs on startup — it tells you where it's looking:
