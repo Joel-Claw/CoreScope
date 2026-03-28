@@ -895,6 +895,124 @@ func (s *Server) handleNodePaths(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 404, "Not found")
 		return
 	}
+	if s.store == nil {
+		writeError(w, 503, "Packet store unavailable")
+		return
+	}
+
+	prefix1 := strings.ToLower(pubkey)
+	if len(prefix1) > 2 {
+		prefix1 = prefix1[:2]
+	}
+	prefix2 := strings.ToLower(pubkey)
+	if len(prefix2) > 4 {
+		prefix2 = prefix2[:4]
+	}
+	s.store.mu.RLock()
+	_, pm := s.store.getCachedNodesAndPM()
+	type pathAgg struct {
+		Hops       []PathHopResp
+		Count      int
+		LastSeen   string
+		SampleHash string
+	}
+	pathGroups := map[string]*pathAgg{}
+	totalTransmissions := 0
+	hopCache := make(map[string]*nodeInfo)
+	resolveHop := func(hop string) *nodeInfo {
+		if cached, ok := hopCache[hop]; ok {
+			return cached
+		}
+		r := pm.resolve(hop)
+		hopCache[hop] = r
+		return r
+	}
+	for _, tx := range s.store.packets {
+		hops := txGetParsedPath(tx)
+		if len(hops) == 0 {
+			continue
+		}
+		found := false
+		for _, hop := range hops {
+			hl := strings.ToLower(hop)
+			if hl == prefix1 || hl == prefix2 || strings.HasPrefix(hl, prefix2) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			continue
+		}
+
+		totalTransmissions++
+		resolvedHops := make([]PathHopResp, len(hops))
+		sigParts := make([]string, len(hops))
+		for i, hop := range hops {
+			resolved := resolveHop(hop)
+			entry := PathHopResp{Prefix: hop, Name: hop}
+			if resolved != nil {
+				entry.Name = resolved.Name
+				entry.Pubkey = resolved.PublicKey
+				if resolved.HasGPS {
+					entry.Lat = resolved.Lat
+					entry.Lon = resolved.Lon
+				}
+				sigParts[i] = resolved.PublicKey
+			} else {
+				sigParts[i] = hop
+			}
+			resolvedHops[i] = entry
+		}
+
+		sig := strings.Join(sigParts, "→")
+		agg := pathGroups[sig]
+		if agg == nil {
+			pathGroups[sig] = &pathAgg{
+				Hops:       resolvedHops,
+				Count:      1,
+				LastSeen:   tx.FirstSeen,
+				SampleHash: tx.Hash,
+			}
+			continue
+		}
+		agg.Count++
+		if tx.FirstSeen > agg.LastSeen {
+			agg.LastSeen = tx.FirstSeen
+			agg.SampleHash = tx.Hash
+		}
+	}
+	s.store.mu.RUnlock()
+
+	paths := make([]PathEntryResp, 0, len(pathGroups))
+	for _, agg := range pathGroups {
+		var lastSeen interface{}
+		if agg.LastSeen != "" {
+			lastSeen = agg.LastSeen
+		}
+		paths = append(paths, PathEntryResp{
+			Hops:       agg.Hops,
+			Count:      agg.Count,
+			LastSeen:   lastSeen,
+			SampleHash: agg.SampleHash,
+		})
+	}
+	sort.Slice(paths, func(i, j int) bool {
+		if paths[i].Count == paths[j].Count {
+			li := ""
+			lj := ""
+			if paths[i].LastSeen != nil {
+				li = fmt.Sprintf("%v", paths[i].LastSeen)
+			}
+			if paths[j].LastSeen != nil {
+				lj = fmt.Sprintf("%v", paths[j].LastSeen)
+			}
+			return li > lj
+		}
+		return paths[i].Count > paths[j].Count
+	})
+	if len(paths) > 50 {
+		paths = paths[:50]
+	}
 
 	writeJSON(w, NodePathsResponse{
 		Node: map[string]interface{}{
@@ -903,9 +1021,9 @@ func (s *Server) handleNodePaths(w http.ResponseWriter, r *http.Request) {
 			"lat":        node["lat"],
 			"lon":        node["lon"],
 		},
-		Paths:              []PathEntryResp{},
-		TotalPaths:         0,
-		TotalTransmissions: 0,
+		Paths:              paths,
+		TotalPaths:         len(pathGroups),
+		TotalTransmissions: totalTransmissions,
 	})
 }
 
@@ -1228,13 +1346,151 @@ func (s *Server) handleObserverDetail(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleObserverAnalytics(w http.ResponseWriter, r *http.Request) {
-	_ = mux.Vars(r)["id"]
+	id := mux.Vars(r)["id"]
+	days := queryInt(r, "days", 7)
+	if days < 1 {
+		days = 1
+	}
+	if days > 365 {
+		days = 365
+	}
+	if s.store == nil {
+		writeError(w, 503, "Packet store unavailable")
+		return
+	}
+
+	since := time.Now().Add(-time.Duration(days) * 24 * time.Hour)
+	s.store.mu.RLock()
+	obsList := s.store.byObserver[id]
+	filtered := make([]*StoreObs, 0, len(obsList))
+	for _, obs := range obsList {
+		if obs.Timestamp == "" {
+			continue
+		}
+		t, err := time.Parse(time.RFC3339Nano, obs.Timestamp)
+		if err != nil {
+			t, err = time.Parse(time.RFC3339, obs.Timestamp)
+		}
+		if err != nil {
+			t, err = time.Parse("2006-01-02 15:04:05", obs.Timestamp)
+		}
+		if err != nil {
+			continue
+		}
+		if t.Equal(since) || t.After(since) {
+			filtered = append(filtered, obs)
+		}
+	}
+	sort.Slice(filtered, func(i, j int) bool { return filtered[i].Timestamp > filtered[j].Timestamp })
+
+	bucketDur := 24 * time.Hour
+	if days <= 1 {
+		bucketDur = time.Hour
+	} else if days <= 7 {
+		bucketDur = 4 * time.Hour
+	}
+	formatLabel := func(t time.Time) string {
+		if days <= 1 {
+			return t.UTC().Format("15:04")
+		}
+		if days <= 7 {
+			return t.UTC().Format("Mon 15:04")
+		}
+		return t.UTC().Format("Jan 02")
+	}
+
+	packetTypes := map[string]int{}
+	timelineCounts := map[int64]int{}
+	nodeBucketSets := map[int64]map[string]struct{}{}
+	snrBuckets := map[int]*SnrDistributionEntry{}
+	recentPackets := make([]map[string]interface{}, 0, 20)
+
+	for i, obs := range filtered {
+		ts, err := time.Parse(time.RFC3339Nano, obs.Timestamp)
+		if err != nil {
+			ts, err = time.Parse(time.RFC3339, obs.Timestamp)
+		}
+		if err != nil {
+			ts, err = time.Parse("2006-01-02 15:04:05", obs.Timestamp)
+		}
+		if err != nil {
+			continue
+		}
+		bucketStart := ts.UTC().Truncate(bucketDur).Unix()
+		timelineCounts[bucketStart]++
+		if nodeBucketSets[bucketStart] == nil {
+			nodeBucketSets[bucketStart] = map[string]struct{}{}
+		}
+
+		enriched := s.store.enrichObs(obs)
+		if pt, ok := enriched["payload_type"].(int); ok {
+			packetTypes[strconv.Itoa(pt)]++
+		}
+		if decodedRaw, ok := enriched["decoded_json"].(string); ok && decodedRaw != "" {
+			var decoded map[string]interface{}
+			if json.Unmarshal([]byte(decodedRaw), &decoded) == nil {
+				for _, k := range []string{"pubKey", "srcHash", "destHash"} {
+					if v, ok := decoded[k].(string); ok && v != "" {
+						nodeBucketSets[bucketStart][v] = struct{}{}
+					}
+				}
+			}
+		}
+		for _, hop := range parsePathJSON(obs.PathJSON) {
+			if hop != "" {
+				nodeBucketSets[bucketStart][hop] = struct{}{}
+			}
+		}
+		if obs.SNR != nil {
+			bucket := int(*obs.SNR) / 2 * 2
+			if *obs.SNR < 0 && int(*obs.SNR) != bucket {
+				bucket -= 2
+			}
+			if snrBuckets[bucket] == nil {
+				snrBuckets[bucket] = &SnrDistributionEntry{Range: fmt.Sprintf("%d to %d", bucket, bucket+2)}
+			}
+			snrBuckets[bucket].Count++
+		}
+		if i < 20 {
+			recentPackets = append(recentPackets, enriched)
+		}
+	}
+	s.store.mu.RUnlock()
+
+	buildTimeline := func(counts map[int64]int) []TimeBucket {
+		keys := make([]int64, 0, len(counts))
+		for k := range counts {
+			keys = append(keys, k)
+		}
+		sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
+		out := make([]TimeBucket, 0, len(keys))
+		for _, k := range keys {
+			lbl := formatLabel(time.Unix(k, 0))
+			out = append(out, TimeBucket{Label: &lbl, Count: counts[k]})
+		}
+		return out
+	}
+
+	nodeCounts := make(map[int64]int, len(nodeBucketSets))
+	for k, nodes := range nodeBucketSets {
+		nodeCounts[k] = len(nodes)
+	}
+	snrKeys := make([]int, 0, len(snrBuckets))
+	for k := range snrBuckets {
+		snrKeys = append(snrKeys, k)
+	}
+	sort.Ints(snrKeys)
+	snrDistribution := make([]SnrDistributionEntry, 0, len(snrKeys))
+	for _, k := range snrKeys {
+		snrDistribution = append(snrDistribution, *snrBuckets[k])
+	}
+
 	writeJSON(w, ObserverAnalyticsResponse{
-		Timeline:        []TimeBucket{},
-		PacketTypes:     map[string]int{},
-		NodesTimeline:   []TimeBucket{},
-		SnrDistribution: []SnrDistributionEntry{},
-		RecentPackets:   []map[string]interface{}{},
+		Timeline:        buildTimeline(timelineCounts),
+		PacketTypes:     packetTypes,
+		NodesTimeline:   buildTimeline(nodeCounts),
+		SnrDistribution: snrDistribution,
+		RecentPackets:   recentPackets,
 	})
 }
 

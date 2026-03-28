@@ -18,7 +18,9 @@ func setupTestServer(t *testing.T) (*Server, *mux.Router) {
 	hub := NewHub()
 	srv := NewServer(db, cfg, hub)
 	store := NewPacketStore(db)
-	store.Load()
+	if err := store.Load(); err != nil {
+		t.Fatalf("store.Load failed: %v", err)
+	}
 	srv.store = store
 	router := mux.NewRouter()
 	srv.RegisterRoutes(router)
@@ -722,6 +724,9 @@ func TestNodePathsFound(t *testing.T) {
 	if body["paths"] == nil {
 		t.Error("expected paths in response")
 	}
+	if got, ok := body["totalTransmissions"].(float64); !ok || got < 1 {
+		t.Errorf("expected totalTransmissions >= 1, got %v", body["totalTransmissions"])
+	}
 }
 
 func TestNodePathsNotFound(t *testing.T) {
@@ -831,6 +836,9 @@ func TestObserverAnalytics(t *testing.T) {
 		}
 		if body["recentPackets"] == nil {
 			t.Error("expected recentPackets")
+		}
+		if recent, ok := body["recentPackets"].([]interface{}); !ok || len(recent) == 0 {
+			t.Errorf("expected non-empty recentPackets, got %v", body["recentPackets"])
 		}
 	})
 
@@ -1252,7 +1260,9 @@ func TestNodeAnalyticsNoNameNode(t *testing.T) {
 	hub := NewHub()
 	srv := NewServer(db, cfg, hub)
 	store := NewPacketStore(db)
-	store.Load()
+	if err := store.Load(); err != nil {
+		t.Fatalf("store.Load failed: %v", err)
+	}
 	srv.store = store
 	router := mux.NewRouter()
 	srv.RegisterRoutes(router)
@@ -1286,7 +1296,9 @@ func TestNodeHealthForNoNameNode(t *testing.T) {
 	hub := NewHub()
 	srv := NewServer(db, cfg, hub)
 	store := NewPacketStore(db)
-	store.Load()
+	if err := store.Load(); err != nil {
+		t.Fatalf("store.Load failed: %v", err)
+	}
 	srv.store = store
 	router := mux.NewRouter()
 	srv.RegisterRoutes(router)
@@ -1879,7 +1891,9 @@ func TestGetNodeHashSizeInfoFlipFlop(t *testing.T) {
 db := setupTestDB(t)
 seedTestData(t, db)
 store := NewPacketStore(db)
-store.Load()
+if err := store.Load(); err != nil {
+	t.Fatalf("store.Load failed: %v", err)
+}
 
 pk := "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
 db.conn.Exec("INSERT OR IGNORE INTO nodes (public_key, name, role) VALUES (?, 'TestNode', 'repeater')", pk)
@@ -1937,7 +1951,17 @@ for _, field := range arrayFields {
 if body[field] == nil {
 t.Errorf("field %q is null, expected []", field)
 }
+	}
 }
+func TestObserverAnalyticsNoStore(t *testing.T) {
+	_, router := setupNoStoreServer(t)
+	req := httptest.NewRequest("GET", "/api/observers/obs1/analytics", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != 503 {
+		t.Fatalf("expected 503, got %d", w.Code)
+	}
 }
 func min(a, b int) int {
 	if a < b {

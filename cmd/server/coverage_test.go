@@ -1467,8 +1467,8 @@ func TestHandleObserverAnalyticsNoStore(t *testing.T) {
 	req := httptest.NewRequest("GET", "/api/observers/obs1/analytics", nil)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
-	if w.Code != 200 {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	if w.Code != 503 {
+		t.Fatalf("expected 503, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
