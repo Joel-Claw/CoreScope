@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+
+	"github.com/meshcore-analyzer/geofilter"
 )
 
 // Config mirrors the Node.js config.json structure (read-only fields).
@@ -57,14 +59,8 @@ type PacketStoreConfig struct {
 	MaxMemoryMB    int     `json:"maxMemoryMB"`     // hard memory ceiling in MB (0 = unlimited)
 }
 
-type GeoFilterConfig struct {
-	Polygon  [][2]float64 `json:"polygon,omitempty"`
-	BufferKm float64      `json:"bufferKm,omitempty"`
-	LatMin   *float64     `json:"latMin,omitempty"`
-	LatMax   *float64     `json:"latMax,omitempty"`
-	LonMin   *float64     `json:"lonMin,omitempty"`
-	LonMax   *float64     `json:"lonMax,omitempty"`
-}
+// GeoFilterConfig is an alias for the shared geofilter.Config type.
+type GeoFilterConfig = geofilter.Config
 
 type RetentionConfig struct {
 	NodeDays   int `json:"nodeDays"`
