@@ -41,7 +41,7 @@ async function run() {
   });
   const context = await browser.newContext();
   const page = await context.newPage();
-  page.setDefaultTimeout(15000);
+  page.setDefaultTimeout(10000);
 
   console.log(`\nRunning E2E tests against ${BASE}\n`);
 
@@ -150,8 +150,7 @@ async function run() {
   // Test 2: Nodes page loads with data
   await test('Nodes page loads with data', async () => {
     await page.goto(`${BASE}/#/nodes`, { waitUntil: 'domcontentloaded' });
-    await page.waitForSelector('table tbody tr', { timeout: 15000 });
-    await page.waitForLoadState('networkidle');
+    await page.waitForSelector('table tbody tr');
     const headers = await page.$$eval('th', els => els.map(e => e.textContent.trim()));
     for (const col of ['Name', 'Public Key', 'Role']) {
       assert(headers.some(h => h.includes(col)), `Missing column: ${col}`);
@@ -163,14 +162,13 @@ async function run() {
 
   // Test 5: Node detail loads (reuses nodes page from test 2)
   await test('Node detail loads', async () => {
-    await page.waitForSelector('table tbody tr', { timeout: 15000 });
-    await page.waitForLoadState('networkidle');
+    await page.waitForSelector('table tbody tr');
     // Click first row
     const firstRow = await page.$('table tbody tr');
     assert(firstRow, 'No node rows found');
     await firstRow.click();
     // Wait for detail pane to appear
-    await page.waitForSelector('.node-detail', { timeout: 10000 });
+    await page.waitForSelector('.node-detail');
     const html = await page.content();
     // Check for status indicator
     const hasStatus = html.includes('\ud83d\udfe2') || html.includes('\u26aa') || html.includes('status') || html.includes('Active') || html.includes('Stale');
@@ -206,11 +204,10 @@ async function run() {
   await test('Map page loads with markers', async () => {
     await page.goto(`${BASE}/#/map`, { waitUntil: 'domcontentloaded' });
     await page.waitForSelector('.leaflet-container');
-    await page.waitForLoadState('networkidle');
-    await page.waitForSelector('.leaflet-tile-loaded', { timeout: 15000 });
+    await page.waitForSelector('.leaflet-tile-loaded');
     // Wait for markers/overlays to render (may not exist with empty DB)
     try {
-      await page.waitForSelector('.leaflet-marker-icon, .leaflet-interactive, circle, .marker-cluster, .leaflet-marker-pane > *, .leaflet-overlay-pane svg path, .leaflet-overlay-pane svg circle', { timeout: 8000 });
+      await page.waitForSelector('.leaflet-marker-icon, .leaflet-interactive, circle, .marker-cluster, .leaflet-marker-pane > *, .leaflet-overlay-pane svg path, .leaflet-overlay-pane svg circle', { timeout: 3000 });
     } catch (_) {
       // No markers with empty DB \u2014 assertion below handles it
     }
@@ -286,7 +283,7 @@ async function run() {
     await page.waitForSelector('.leaflet-container');
     // Wait for markers (may not exist with empty DB)
     try {
-      await page.waitForSelector('.leaflet-marker-icon, .leaflet-interactive', { timeout: 8000 });
+      await page.waitForSelector('.leaflet-marker-icon, .leaflet-interactive', { timeout: 3000 });
     } catch (_) {
       // No markers with empty DB
     }
@@ -338,7 +335,6 @@ async function run() {
     // Fresh navigation to ensure clean state
     await page.goto(`${BASE}/#/packets`, { waitUntil: 'domcontentloaded' });
     await page.waitForSelector('table tbody tr', { timeout: 15000 });
-    await page.waitForLoadState('networkidle');
     const groupBtn = await page.$('#fGroup');
     assert(groupBtn, 'Group by hash button (#fGroup) not found');
     // Check initial state (default is grouped/active)
@@ -756,8 +752,7 @@ async function run() {
 
   await test('Channels page loads with channel list', async () => {
     await page.goto(`${BASE}/#/channels`, { waitUntil: 'domcontentloaded' });
-    await page.waitForSelector('#chList', { timeout: 15000 });
-    await page.waitForLoadState('networkidle');
+    await page.waitForSelector('#chList', { timeout: 8000 });
     // Channels are fetched async — wait for items to render
     await page.waitForFunction(() => {
       const list = document.getElementById('chList');
@@ -825,8 +820,7 @@ async function run() {
 
   await test('Observers page loads with table', async () => {
     await page.goto(`${BASE}/#/observers`, { waitUntil: 'domcontentloaded' });
-    await page.waitForSelector('#obsTable', { timeout: 15000 });
-    await page.waitForLoadState('networkidle');
+    await page.waitForSelector('#obsTable', { timeout: 8000 });
     const table = await page.$('#obsTable');
     assert(table, 'Observers table not found');
     // Check for summary stats
