@@ -7,14 +7,20 @@ ARG GIT_COMMIT=unknown
 ARG BUILD_TIME=unknown
 
 # Build server
-WORKDIR /build/server
+WORKDIR /build
+COPY go.mod ./go.mod
+COPY internal/decoder/ ./internal/decoder/
+WORKDIR /build/cmd/server
 COPY cmd/server/go.mod cmd/server/go.sum ./
 RUN go mod download
 COPY cmd/server/ ./
 RUN go build -ldflags "-X main.Version=${APP_VERSION} -X main.Commit=${GIT_COMMIT} -X main.BuildTime=${BUILD_TIME}" -o /corescope-server .
 
 # Build ingestor
-WORKDIR /build/ingestor
+WORKDIR /build
+COPY go.mod ./go.mod
+COPY internal/decoder/ ./internal/decoder/
+WORKDIR /build/cmd/ingestor
 COPY cmd/ingestor/go.mod cmd/ingestor/go.sum ./
 RUN go mod download
 COPY cmd/ingestor/ ./
