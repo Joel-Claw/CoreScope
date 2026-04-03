@@ -454,6 +454,35 @@ func TestConfigThemeEndpoint(t *testing.T) {
 	}
 }
 
+func TestConfigThemeTypeColorsDefaults(t *testing.T) {
+	_, router := setupTestServer(t)
+	req := httptest.NewRequest("GET", "/api/config/theme", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	var body map[string]interface{}
+	json.Unmarshal(w.Body.Bytes(), &body)
+	tc, ok := body["typeColors"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected typeColors object in theme response")
+	}
+	expectedTypes := []string{"ADVERT", "GRP_TXT", "TXT_MSG", "ACK", "REQUEST", "RESPONSE", "TRACE", "PATH", "ANON_REQ", "UNKNOWN"}
+	for _, typ := range expectedTypes {
+		val, exists := tc[typ]
+		if !exists {
+			t.Errorf("typeColors missing default for %s", typ)
+			continue
+		}
+		color, ok := val.(string)
+		if !ok || color == "" || color == "#000000" {
+			t.Errorf("typeColors[%s] should be a non-black color, got %v", typ, val)
+		}
+	}
+}
+
 func TestConfigMapEndpoint(t *testing.T) {
 	_, router := setupTestServer(t)
 	req := httptest.NewRequest("GET", "/api/config/map", nil)

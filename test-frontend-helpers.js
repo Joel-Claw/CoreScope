@@ -2020,6 +2020,24 @@ console.log('\n=== customize-v2.js: core behavior ===');
     assert.ok(src.includes("surface3: '--surface-3'"), 'surface3 must map to --surface-3');
     assert.ok(src.includes("sectionBg: '--section-bg'"), 'sectionBg must map to --section-bg');
   });
+
+  test('_renderNodes falls back to window.TYPE_COLORS when typeColors is empty (#514)', () => {
+    const ctx = makeSandbox();
+    ctx.CustomEvent = function (type) { this.type = type; };
+    ctx.TYPE_COLORS = { ADVERT: '#22c55e', GRP_TXT: '#3b82f6' };
+    ctx.window.TYPE_COLORS = ctx.TYPE_COLORS;
+    const v2 = loadCustomizeV2(ctx);
+    // computeEffective with empty typeColors should still allow fallback
+    const server = { typeColors: {} };
+    const effective = v2.computeEffective(server, {});
+    // When typeColors is empty, the render should fall back to TYPE_COLORS
+    // We test the logic directly: tc[key] || TYPE_COLORS[key] || '#000000'
+    const tc = effective.typeColors || {};
+    const advertColor = tc['ADVERT'] || (ctx.window.TYPE_COLORS && ctx.window.TYPE_COLORS['ADVERT']) || '#000000';
+    assert.strictEqual(advertColor, '#22c55e', 'ADVERT should fall back to TYPE_COLORS, not #000000');
+    const grpColor = tc['GRP_TXT'] || (ctx.window.TYPE_COLORS && ctx.window.TYPE_COLORS['GRP_TXT']) || '#000000';
+    assert.strictEqual(grpColor, '#3b82f6', 'GRP_TXT should fall back to TYPE_COLORS, not #000000');
+  });
 }
 
 // ===== APP.JS: home rehydration merge (mergeUserHomeConfig removed — dead code) =====

@@ -293,7 +293,12 @@ func (s *Server) handleConfigTheme(w http.ResponseWriter, r *http.Request) {
 	}, s.cfg.NodeColors, theme.NodeColors)
 
 	themeDark := mergeMap(map[string]interface{}{}, s.cfg.ThemeDark, theme.ThemeDark)
-	typeColors := mergeMap(map[string]interface{}{}, s.cfg.TypeColors, theme.TypeColors)
+	typeColors := mergeMap(map[string]interface{}{
+		"ADVERT": "#22c55e", "GRP_TXT": "#3b82f6", "TXT_MSG": "#f59e0b",
+		"ACK": "#6b7280", "REQUEST": "#a855f7", "RESPONSE": "#06b6d4",
+		"TRACE": "#ec4899", "PATH": "#14b8a6", "ANON_REQ": "#f43f5e",
+		"UNKNOWN": "#6b7280",
+	}, s.cfg.TypeColors, theme.TypeColors)
 
 	var home interface{}
 	if theme.Home != nil {

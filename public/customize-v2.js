@@ -966,7 +966,7 @@
     var stc = server.typeColors || {};
     var typeRows = '';
     for (var tkey in TYPE_LABELS) {
-      var tval = tc[tkey] || '#000000';
+      var tval = tc[tkey] || (window.TYPE_COLORS && window.TYPE_COLORS[tkey]) || '#000000';
       typeRows += '<div class="cust-color-row">' +
         '<div><label>' + (TYPE_EMOJI[tkey] || '') + ' ' + TYPE_LABELS[tkey] + _overrideDot('typeColors', tkey) + '</label>' +
         '<div class="cust-hint">' + (TYPE_HINTS[tkey] || '') + '</div></div>' +
