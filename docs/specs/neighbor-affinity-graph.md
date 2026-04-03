@@ -209,17 +209,35 @@ After building the initial graph, ambiguous edges can be resolved by cross-refer
 ```
 for each ambiguous edge E(from=X, prefix="A3", candidates=[a3xx, a3yy]):
     for each candidate C in candidates:
-        # How many of X's OTHER known neighbors are also neighbors of C?
-        mutual = count(neighbors(X) ∩ neighbors(C))
-        C.mutual_score = mutual
+        # Jaccard similarity: normalized mutual-neighbor overlap
+        shared = neighbors(X) ∩ neighbors(C)
+        union  = neighbors(X) ∪ neighbors(C)
+        C.mutual_score = |shared| / |union|   # Jaccard coefficient, 0.0–1.0
     
-    if exactly one candidate has mutual_score > 0:
-        resolve E → that candidate
-    elif max(mutual_scores) >> second_max:
-        resolve E → best candidate (with confidence note)
+    # Auto-resolve only with high confidence (see thresholds below)
+    if best.mutual_score ≥ 3 × second_best.mutual_score AND best.observations ≥ 3:
+        resolve E → best candidate
+    else:
+        # Remain ambiguous — return all candidates with scores for frontend/user
 ```
 
+**Jaccard normalization:** Raw mutual-neighbor counts are biased toward high-degree nodes. A repeater with 50 neighbors will share many mutual neighbors with almost anything, inflating its score. Jaccard similarity (`|A ∩ B| / |A ∪ B|`) normalizes for node degree, ensuring that a node sharing 3 of 4 neighbors (Jaccard = 0.75) scores higher than a node sharing 5 of 50 (Jaccard = 0.10).
+
+**Confidence threshold for auto-resolution:** A hash prefix is auto-resolved to a candidate ONLY when:
+1. The best candidate's Jaccard score is **≥ 3× the second-best** candidate's score
+2. AND the best candidate has **at least 3 observations**
+
+If either condition is not met, the prefix remains ambiguous and the API returns all candidates with their scores. This prevents low-confidence auto-resolution and lets the frontend/user make the final call.
+
+**Transitivity poisoning guard:** When resolving ambiguous prefixes via mutual-neighbor analysis, ONLY use edges where **both endpoints are fully resolved** (known pubkeys from direct observation or unique prefix match). Never use a previously auto-resolved prefix as evidence to resolve another prefix. This prevents cascading errors where one incorrect auto-resolution poisons subsequent resolutions — a single wrong guess could propagate through the graph and corrupt multiple edges.
+
 This exploits graph transitivity: nodes that share many neighbors are likely in the same physical area and thus likely the correct resolution.
+
+### Orphan prefix handling
+
+When `resolve_prefix(prefix)` returns **zero candidates** (the prefix does not match any known node in the registry), the edge is still recorded using the raw prefix as a placeholder. The `NeighborEdge` stores the unresolved prefix with `NodeB = ""` and `Ambiguous = true`, but with an empty `Candidates` list.
+
+The API includes these as `"unresolved": true` entries so the frontend can display them differently (greyed out, "unknown node" label). This preserves topology information — an observer clearly has *some* neighbor at that prefix, even if we don't know who it is yet. When new nodes are registered and match the prefix, the edge can be retroactively resolved on the next graph rebuild.
 
 ### Output
 
@@ -277,6 +295,21 @@ Returns the neighbor list for a specific node.
         {"pubkey": "a3b4c5...", "name": "Node-Alpha", "role": "companion"},
         {"pubkey": "a3f0e1...", "name": "Node-Beta", "role": "companion"}
       ]
+    },
+    {
+      "pubkey": null,
+      "prefix": "FF",
+      "name": null,
+      "role": null,
+      "count": 3,
+      "score": 0.02,
+      "first_seen": "2026-03-28T...",
+      "last_seen": "2026-03-29T...",
+      "avg_snr": -18.5,
+      "observers": ["obs-sjc-1"],
+      "ambiguous": true,
+      "unresolved": true,
+      "candidates": []
     }
   ],
   "total_observations": 2341
@@ -521,6 +554,15 @@ TestBuildNeighborGraph_CountAccumulation
 TestBuildNeighborGraph_MultipleObservers
     → same edge seen by obs1 and obs2 → observers=["obs1","obs2"]
 
+TestBuildNeighborGraph_EqualMutualScores
+    → two candidates for prefix "A3" have identical Jaccard scores and identical mutual-neighbor overlap → algorithm does NOT auto-resolve; returns both as ambiguous with their scores
+
+TestBuildNeighborGraph_ObserverSelfEdgeGuard
+    → observer's own hash prefix appears in path_json (due to a bug or routing loop) → algorithm never creates an edge from observer to itself; the self-referencing hop is skipped
+
+TestBuildNeighborGraph_OrphanPrefix
+    → path contains prefix "FF" matching zero known nodes → edge recorded with raw prefix as placeholder, marked unresolved=true, candidates=[]
+
 TestAffinityScore_Fresh
     → count=100, last_seen=now → score ≈ 1.0
 
@@ -560,6 +602,9 @@ TestNeighborGraphAPI_RegionFilter → only edges from filtered observers
 | Very long paths (10+ hops) | Extract first hop (ADVERTs only) and last hop (all types); ignore intermediate hops |
 | Duplicate observations (same observer, same path, same timestamp) | Deduplicated by existing `PacketStore` logic |
 | Non-ADVERT packet types (REQ, TXT_MSG, ACK, etc.) | Only `observer ↔ path[last]` edge extracted |
+| Equal mutual-neighbor scores for two candidates | Do NOT auto-resolve; return both as ambiguous with scores |
+| Observer's own prefix in path (self-edge) | Skip — never create edge from observer to itself |
+| Orphan prefix (zero candidates from resolve_prefix) | Record edge with raw prefix, `unresolved: true`, empty candidates |
 
 ---
 
