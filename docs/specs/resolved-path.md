@@ -1,7 +1,8 @@
 # Spec: Server-side hop resolution at ingest — `resolved_path`
 
 **Status:** Draft  
-**Related:** [Neighbor affinity spec](./customizer-rework.md), [#482](https://github.com/Kpa-clawbot/CoreScope/issues/482), [#528](https://github.com/Kpa-clawbot/CoreScope/issues/528)
+**Issue:** [#555](https://github.com/Kpa-clawbot/CoreScope/issues/555)  
+**Related:** [#482](https://github.com/Kpa-clawbot/CoreScope/issues/482), [#528](https://github.com/Kpa-clawbot/CoreScope/issues/528)
 
 ## Problem
 
