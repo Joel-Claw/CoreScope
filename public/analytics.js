@@ -2439,6 +2439,13 @@ function destroy() { _analyticsData = {}; _channelData = null; if (_ngState && _
           <button id="ptGenBtn" style="padding:6px 16px;background:var(--accent);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.95em">Generate</button>
         </div>
         <div id="ptGenResult"></div>
+        <div style="margin-top:14px;padding:10px 14px;border:1px solid var(--accent);border-radius:6px;background:var(--bg-secondary,var(--bg));font-size:0.88em">
+          📖 <strong>New to multi-byte prefixes?</strong>
+          <a href="https://github.com/meshcore-dev/MeshCore/blob/main/docs/faq.md#39-q-what-is-multi-byte-support--what-do-1-byte-2-byte-3-byte-adverts-and-messages-mean"
+            target="_blank" rel="noopener noreferrer" style="color:var(--accent);margin-left:4px">
+            Read the MeshCore FAQ on multi-byte support →
+          </a>
+        </div>
       </div>`;
 
     // --- Helpers ---
