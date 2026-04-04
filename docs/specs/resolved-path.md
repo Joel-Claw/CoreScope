@@ -52,7 +52,15 @@ At ingest, for each packet:
 - **Non-ADVERT packets**: originator is unknown (encrypted). ONLY extract `observer ↔ path[last]`.
 - Each packet produces **1 or 2 edge upserts** depending on type.
 
-Edge upsert: `INSERT OR REPLACE INTO neighbor_edges` with `count = count + 1` and `last_seen = now`.
+Edge upsert uses canonical ordering (`node_a < node_b` lexicographically) to avoid duplicate edges:
+
+```sql
+INSERT INTO neighbor_edges (node_a, node_b, count, last_seen)
+VALUES (min(?, ?), max(?, ?), 1, ?)
+ON CONFLICT(node_a, node_b) DO UPDATE SET
+  count = count + 1,
+  last_seen = excluded.last_seen;
+```
 
 ### Cold startup and backfill
 
@@ -114,7 +122,9 @@ Found via `grep -n "pm.resolve" cmd/server/store.go`:
 
 ### Where resolution happens
 
-In `PacketStore.IngestNewFromDB()` in `cmd/server/store.go`. Resolution is added **during** the observation INSERT — same write, same transaction.
+In `PacketStore.IngestNewFromDB()` in `cmd/server/store.go`. For new observations, resolution happens during the observation INSERT — same write. For backfill (cold startup), it's a separate UPDATE pass.
+
+Note on ordering: edge upserts (step 5) happen **after** resolution (step 3-4). This means the very first packet for a new neighbor pair resolves without that edge in the graph yet. This is acceptable — the affinity tier will miss, but geo/GPS/first-match tiers still work. On the next packet, the edge exists and affinity kicks in.
 
 Resolution flow per observation:
 1. Parse `path_json` into hop prefixes
