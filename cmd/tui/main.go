@@ -11,6 +11,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -71,19 +72,21 @@ type model struct {
 	lastRefresh time.Time
 	fetchErr    error
 
-	// Live feed
-	packets []Packet
+	// Live feed — ring buffer with head/tail indices, no allocations in steady state.
+	ringBuf  [ringBufferMax]Packet
+	ringHead int // index of oldest element
+	ringLen  int // number of elements in the buffer
 	// wsMsgChan multiplexes packets and status updates from the WS goroutine
 	// into the bubbletea event loop.
-	wsMsgChan chan tea.Msg
-	wsStatus  string
-	wsDone    chan struct{}
+	wsMsgChan  chan tea.Msg
+	wsStatus   string
+	wsDone     chan struct{}
+	wsCloseOnce sync.Once
 }
 
 func initialModel(baseURL string) model {
 	return model{
 		baseURL:   strings.TrimRight(baseURL, "/"),
-		packets:   make([]Packet, 0, ringBufferMax),
 		wsStatus:  "disconnected",
 		wsMsgChan: make(chan tea.Msg, 100),
 		wsDone:    make(chan struct{}),
@@ -114,7 +117,7 @@ func fetchSummary(baseURL string) tea.Cmd {
 			return summaryErrMsg{err}
 		}
 		defer resp.Body.Close()
-		body, err := io.ReadAll(resp.Body)
+		body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		if err != nil {
 			return summaryErrMsg{err}
 		}
@@ -397,7 +400,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "q", "ctrl+c":
-			close(m.wsDone)
+			m.wsCloseOnce.Do(func() { close(m.wsDone) })
 			return m, tea.Quit
 		case "tab", "1":
 			if m.currentView == viewDashboard {
@@ -425,6 +428,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(
 			fetchSummary(m.baseURL),
 			tickEvery(5*time.Second),
+			listenForWSMsg(m.wsMsgChan),
 		)
 
 	case wsStatusMsg:
@@ -433,17 +437,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case packetMsg:
 		p := Packet(msg)
-		m.packets = append(m.packets, p)
-		if len(m.packets) > ringBufferMax {
-			// Copy to a new slice so the old backing array can be GC'd.
-			trimmed := make([]Packet, ringBufferMax)
-			copy(trimmed, m.packets[len(m.packets)-ringBufferMax:])
-			m.packets = trimmed
+		// Ring buffer: write at (head+len) % cap, no allocations.
+		if m.ringLen < ringBufferMax {
+			m.ringBuf[(m.ringHead+m.ringLen)%ringBufferMax] = p
+			m.ringLen++
+		} else {
+			// Overwrite oldest, advance head.
+			m.ringBuf[m.ringHead] = p
+			m.ringHead = (m.ringHead + 1) % ringBufferMax
 		}
 		return m, listenForWSMsg(m.wsMsgChan)
 	}
 
-	return m, nil
+	// Always keep the WS listener running, even for unhandled messages.
+	return m, listenForWSMsg(m.wsMsgChan)
 }
 
 func (m model) View() string {
@@ -576,7 +583,7 @@ func fmtNF(nf *float64) string {
 func (m model) viewLiveFeed() string {
 	var b strings.Builder
 
-	b.WriteString(fmt.Sprintf("Packets: %d/%d │ WS: %s\n\n", len(m.packets), ringBufferMax, m.wsStatus))
+	b.WriteString(fmt.Sprintf("Packets: %d/%d │ WS: %s\n\n", m.ringLen, ringBufferMax, m.wsStatus))
 
 	b.WriteString(headerStyle.Render(fmt.Sprintf("%-10s %-10s %-20s %5s %6s %6s  %s",
 		"Time", "Type", "Observer", "Hops", "RSSI", "SNR", "Channel/Text")))
@@ -589,12 +596,15 @@ func (m model) viewLiveFeed() string {
 	if m.height > 10 {
 		maxLines = m.height - 10
 	}
-	start := 0
-	if len(m.packets) > maxLines {
-		start = len(m.packets) - maxLines
+	// Calculate visible range from the ring buffer (most recent packets).
+	visible := m.ringLen
+	if visible > maxLines {
+		visible = maxLines
 	}
+	startIdx := m.ringLen - visible // offset from oldest
 
-	for _, p := range m.packets[start:] {
+	for i := 0; i < visible; i++ {
+		p := m.ringBuf[(m.ringHead+startIdx+i)%ringBufferMax]
 		typeStyle := dimStyle
 		switch p.Type {
 		case "ADVERT":
