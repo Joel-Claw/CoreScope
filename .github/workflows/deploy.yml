@@ -276,6 +276,18 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v5
 
+      - name: Pull GHCR edge image (or fall back to local build)
+        run: |
+          GHCR_IMAGE="ghcr.io/kpa-clawbot/corescope:edge"
+          echo "Attempting to pull $GHCR_IMAGE ..."
+          if docker pull "$GHCR_IMAGE" 2>/dev/null; then
+            # Tag as the local image name that docker-compose.staging.yml expects
+            docker tag "$GHCR_IMAGE" corescope-go:latest
+            echo "✅ Using pre-built GHCR edge image"
+          else
+            echo "⚠️ GHCR pull failed — using locally built image from build job"
+          fi
+
       - name: Deploy staging
         run: |
           # Stop old container and release memory
