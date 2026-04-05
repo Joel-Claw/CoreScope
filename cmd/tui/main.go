@@ -11,7 +11,6 @@ import (
 	"os"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -58,6 +57,9 @@ const (
 	viewLiveFeed
 )
 
+// ringBufferMax is the maximum number of packets kept in the live feed.
+const ringBufferMax = 500
+
 type model struct {
 	baseURL     string
 	currentView view
@@ -70,20 +72,21 @@ type model struct {
 	fetchErr    error
 
 	// Live feed
-	packets    []Packet
-	wsStatus   string
-	packetsMu  sync.Mutex
-	packetChan chan Packet
-	wsDone     chan struct{}
+	packets []Packet
+	// wsMsgChan multiplexes packets and status updates from the WS goroutine
+	// into the bubbletea event loop.
+	wsMsgChan chan tea.Msg
+	wsStatus  string
+	wsDone    chan struct{}
 }
 
 func initialModel(baseURL string) model {
 	return model{
-		baseURL:    strings.TrimRight(baseURL, "/"),
-		packets:    make([]Packet, 0, 500),
-		wsStatus:   "disconnected",
-		packetChan: make(chan Packet, 100),
-		wsDone:     make(chan struct{}),
+		baseURL:   strings.TrimRight(baseURL, "/"),
+		packets:   make([]Packet, 0, ringBufferMax),
+		wsStatus:  "disconnected",
+		wsMsgChan: make(chan tea.Msg, 100),
+		wsDone:    make(chan struct{}),
 	}
 }
 
@@ -129,19 +132,39 @@ func tickEvery(d time.Duration) tea.Cmd {
 	})
 }
 
-func listenForPackets(ch <-chan Packet) tea.Cmd {
+// listenForWSMsg waits for the next message from the WebSocket goroutine and
+// delivers it into the bubbletea event loop. Returns nil when the channel is
+// closed (program shutting down).
+func listenForWSMsg(ch <-chan tea.Msg) tea.Cmd {
 	return func() tea.Msg {
-		p := <-ch
-		return packetMsg(p)
+		msg, ok := <-ch
+		if !ok {
+			return nil
+		}
+		return msg
 	}
 }
 
 // --- WebSocket goroutine ---
 
-func connectWS(baseURL string, packetChan chan<- Packet, statusChan chan<- string, done <-chan struct{}) {
+// connectWS manages the WebSocket connection with exponential backoff reconnect.
+// It sends packetMsg and wsStatusMsg on msgChan. It returns when done is closed.
+func connectWS(baseURL string, msgChan chan<- tea.Msg, done <-chan struct{}) {
+	defer func() {
+		if r := recover(); r != nil {
+			select {
+			case msgChan <- wsStatusMsg(fmt.Sprintf("panic: %v", r)):
+			default:
+			}
+		}
+	}()
+
 	u, err := url.Parse(baseURL)
 	if err != nil {
-		statusChan <- "invalid url"
+		select {
+		case msgChan <- wsStatusMsg("invalid url"):
+		case <-done:
+		}
 		return
 	}
 	scheme := "ws"
@@ -160,10 +183,10 @@ func connectWS(baseURL string, packetChan chan<- Packet, statusChan chan<- strin
 		default:
 		}
 
-		statusChan <- "connecting..."
+		sendStatus(msgChan, done, "connecting...")
 		conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
 		if err != nil {
-			statusChan <- fmt.Sprintf("error: %v", err)
+			sendStatus(msgChan, done, fmt.Sprintf("error: %v", err))
 			select {
 			case <-done:
 				return
@@ -173,33 +196,77 @@ func connectWS(baseURL string, packetChan chan<- Packet, statusChan chan<- strin
 			continue
 		}
 
-		statusChan <- "connected"
+		sendStatus(msgChan, done, "connected")
 		backoff = time.Second
 
-		for {
-			select {
-			case <-done:
-				conn.Close()
-				return
-			default:
-			}
-
-			_, message, err := conn.ReadMessage()
-			if err != nil {
-				statusChan <- "disconnected"
-				conn.Close()
-				break
-			}
-
-			pkt := parseWSMessage(message)
-			if pkt != nil {
+		// readLoop reads messages until error or done. We use a read deadline
+		// so that ReadMessage unblocks periodically, letting us check done.
+		func() {
+			defer conn.Close()
+			for {
 				select {
-				case packetChan <- *pkt:
-				default: // drop if buffer full
+				case <-done:
+					// Send a graceful close frame before returning.
+					_ = conn.WriteMessage(
+						websocket.CloseMessage,
+						websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""),
+					)
+					return
+				default:
+				}
+
+				// Set a deadline so ReadMessage doesn't block forever, allowing
+				// us to re-check the done channel.
+				conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+				_, message, err := conn.ReadMessage()
+				if err != nil {
+					if websocket.IsCloseError(err, websocket.CloseNormalClosure) {
+						sendStatus(msgChan, done, "disconnected")
+						return
+					}
+					// Timeout is expected — just loop back to check done.
+					if netErr, ok := err.(*websocket.CloseError); ok {
+						sendStatus(msgChan, done, fmt.Sprintf("closed: %d", netErr.Code))
+						return
+					}
+					if isTimeoutError(err) {
+						continue
+					}
+					sendStatus(msgChan, done, "disconnected")
+					return
+				}
+
+				pkt := parseWSMessage(message)
+				if pkt != nil {
+					select {
+					case msgChan <- packetMsg(*pkt):
+					case <-done:
+						return
+					}
 				}
 			}
-		}
+		}()
 	}
+}
+
+// sendStatus sends a wsStatusMsg, respecting cancellation.
+func sendStatus(msgChan chan<- tea.Msg, done <-chan struct{}, status string) {
+	select {
+	case msgChan <- wsStatusMsg(status):
+	case <-done:
+	}
+}
+
+// isTimeoutError checks if an error is a network timeout (read deadline exceeded).
+func isTimeoutError(err error) bool {
+	// net.Error has a Timeout() method.
+	type timeout interface {
+		Timeout() bool
+	}
+	if t, ok := err.(timeout); ok {
+		return t.Timeout()
+	}
+	return false
 }
 
 func parseWSMessage(data []byte) *Packet {
@@ -225,8 +292,10 @@ func parseWSMessage(data []byte) *Packet {
 			if ts, ok := packet["timestamp"].(string); ok {
 				if t, err := time.Parse(time.RFC3339, ts); err == nil {
 					pkt.Timestamp = t.Format("15:04:05")
-				} else {
+				} else if len(ts) >= 8 {
 					pkt.Timestamp = ts[:8]
+				} else {
+					pkt.Timestamp = ts
 				}
 			}
 		}
@@ -257,7 +326,7 @@ func parseWSMessage(data []byte) *Packet {
 		if name, ok := packet["observer_name"].(string); ok {
 			pkt.ObserverName = name
 		} else if name, ok := packet["observer_id"].(string); ok {
-			pkt.ObserverName = name[:8]
+			pkt.ObserverName = safePrefix(name, 8)
 		}
 	}
 
@@ -303,22 +372,23 @@ func truncate(s string, n int) string {
 	return s[:n-1] + "…"
 }
 
+// safePrefix returns the first n bytes of s, or s itself if shorter.
+func safePrefix(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n]
+}
+
 // --- Init / Update / View ---
 
 func (m model) Init() tea.Cmd {
-	// Start WS in background
-	statusChan := make(chan string, 10)
-	go connectWS(m.baseURL, m.packetChan, statusChan, m.wsDone)
-	go func() {
-		for s := range statusChan {
-			m.packetChan <- Packet{Type: "__status__", ObserverName: s}
-		}
-	}()
+	go connectWS(m.baseURL, m.wsMsgChan, m.wsDone)
 
 	return tea.Batch(
 		fetchSummary(m.baseURL),
 		tickEvery(5*time.Second),
-		listenForPackets(m.packetChan),
+		listenForWSMsg(m.wsMsgChan),
 	)
 }
 
@@ -357,17 +427,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			tickEvery(5*time.Second),
 		)
 
+	case wsStatusMsg:
+		m.wsStatus = string(msg)
+		return m, listenForWSMsg(m.wsMsgChan)
+
 	case packetMsg:
 		p := Packet(msg)
-		if p.Type == "__status__" {
-			m.wsStatus = p.ObserverName
-			return m, listenForPackets(m.packetChan)
-		}
 		m.packets = append(m.packets, p)
-		if len(m.packets) > 500 {
-			m.packets = m.packets[len(m.packets)-500:]
+		if len(m.packets) > ringBufferMax {
+			// Copy to a new slice so the old backing array can be GC'd.
+			trimmed := make([]Packet, ringBufferMax)
+			copy(trimmed, m.packets[len(m.packets)-ringBufferMax:])
+			m.packets = trimmed
 		}
-		return m, listenForPackets(m.packetChan)
+		return m, listenForWSMsg(m.wsMsgChan)
 	}
 
 	return m, nil
@@ -455,7 +528,7 @@ func (m model) viewDashboard() string {
 	b.WriteString("\n")
 
 	for _, o := range observers {
-		name := o.ObserverID[:8]
+		name := safePrefix(o.ObserverID, 8)
 		if o.ObserverName != nil && *o.ObserverName != "" {
 			name = truncate(*o.ObserverName, 24)
 		}
@@ -503,7 +576,7 @@ func fmtNF(nf *float64) string {
 func (m model) viewLiveFeed() string {
 	var b strings.Builder
 
-	b.WriteString(fmt.Sprintf("Packets: %d/500 │ WS: %s\n\n", len(m.packets), m.wsStatus))
+	b.WriteString(fmt.Sprintf("Packets: %d/%d │ WS: %s\n\n", len(m.packets), ringBufferMax, m.wsStatus))
 
 	b.WriteString(headerStyle.Render(fmt.Sprintf("%-10s %-10s %-20s %5s %6s %6s  %s",
 		"Time", "Type", "Observer", "Hops", "RSSI", "SNR", "Channel/Text")))
