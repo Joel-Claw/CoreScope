@@ -39,6 +39,19 @@ jobs:
             # On master push: edge
             type=edge,branch=master
 
+      - name: Set build time
+        id: buildtime
+        run: echo "value=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
+
+      - name: Compute app version
+        id: appversion
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            echo "value=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: docker/build-push-action@v6
         with:
           context: .
@@ -47,8 +60,8 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
-            APP_VERSION=${{ github.ref_name }}
+            APP_VERSION=${{ steps.appversion.outputs.value }}
             GIT_COMMIT=${{ github.sha }}
-            BUILD_TIME=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+            BUILD_TIME=${{ steps.buildtime.outputs.value }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
