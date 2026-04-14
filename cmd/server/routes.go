@@ -1045,6 +1045,17 @@ func (s *Server) handleNodes(w http.ResponseWriter, r *http.Request) {
 		total = len(filtered)
 		nodes = filtered
 	}
+	// Filter blacklisted nodes
+	if len(s.cfg.NodeBlacklist) > 0 {
+		filtered := nodes[:0]
+		for _, node := range nodes {
+			if pk, ok := node["public_key"].(string); !ok || !s.cfg.IsBlacklisted(pk) {
+				filtered = append(filtered, node)
+			}
+		}
+		total = len(filtered)
+		nodes = filtered
+	}
 	writeJSON(w, NodeListResponse{Nodes: nodes, Total: total, Counts: counts})
 }
 
@@ -1059,11 +1070,25 @@ func (s *Server) handleNodeSearch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, err.Error())
 		return
 	}
+	// Filter blacklisted nodes from search results
+	if len(s.cfg.NodeBlacklist) > 0 {
+		filtered := make([]map[string]interface{}, 0, len(nodes))
+		for _, node := range nodes {
+			if pk, ok := node["public_key"].(string); !ok || !s.cfg.IsBlacklisted(pk) {
+				filtered = append(filtered, node)
+			}
+		}
+		nodes = filtered
+	}
 	writeJSON(w, NodeSearchResponse{Nodes: nodes})
 }
 
 func (s *Server) handleNodeDetail(w http.ResponseWriter, r *http.Request) {
 	pubkey := mux.Vars(r)["pubkey"]
+	if s.cfg.IsBlacklisted(pubkey) {
+		writeError(w, 404, "Not found")
+		return
+	}
 	node, err := s.db.GetNodeByPubkey(pubkey)
 	if err != nil || node == nil {
 		writeError(w, 404, "Not found")
@@ -1089,6 +1114,10 @@ func (s *Server) handleNodeDetail(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleNodeHealth(w http.ResponseWriter, r *http.Request) {
 	pubkey := mux.Vars(r)["pubkey"]
+	if s.cfg.IsBlacklisted(pubkey) {
+		writeError(w, 404, "Not found")
+		return
+	}
 	if s.store != nil {
 		result, err := s.store.GetNodeHealth(pubkey)
 		if err != nil || result == nil {
@@ -1109,7 +1138,19 @@ func (s *Server) handleBulkHealth(w http.ResponseWriter, r *http.Request) {
 
 	if s.store != nil {
 		region := r.URL.Query().Get("region")
-		writeJSON(w, s.store.GetBulkHealth(limit, region))
+		results := s.store.GetBulkHealth(limit, region)
+		// Filter blacklisted nodes
+		if len(s.cfg.NodeBlacklist) > 0 {
+			filtered := make([]map[string]interface{}, 0, len(results))
+			for _, entry := range results {
+				if pk, ok := entry["public_key"].(string); !ok || !s.cfg.IsBlacklisted(pk) {
+					filtered = append(filtered, entry)
+				}
+			}
+			writeJSON(w, filtered)
+			return
+		}
+		writeJSON(w, results)
 		return
 	}
 
@@ -1128,6 +1169,10 @@ func (s *Server) handleNetworkStatus(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleNodePaths(w http.ResponseWriter, r *http.Request) {
 	pubkey := mux.Vars(r)["pubkey"]
+	if s.cfg.IsBlacklisted(pubkey) {
+		writeError(w, 404, "Not found")
+		return
+	}
 	node, err := s.db.GetNodeByPubkey(pubkey)
 	if err != nil || node == nil {
 		writeError(w, 404, "Not found")
@@ -1291,6 +1336,10 @@ func (s *Server) handleNodePaths(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleNodeAnalytics(w http.ResponseWriter, r *http.Request) {
 	pubkey := mux.Vars(r)["pubkey"]
+	if s.cfg.IsBlacklisted(pubkey) {
+		writeError(w, 404, "Not found")
+		return
+	}
 	days := queryInt(r, "days", 7)
 	if days < 1 {
 		days = 1
