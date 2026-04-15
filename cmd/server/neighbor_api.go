@@ -276,6 +276,11 @@ func (s *Server) handleNeighborGraph(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		// Filter blacklisted nodes from graph.
+		if s.cfg != nil && (s.cfg.IsBlacklisted(e.NodeA) || s.cfg.IsBlacklisted(e.NodeB)) {
+			continue
+		}
+
 		ge := GraphEdge{
 			Source:        e.NodeA,
 			Target:        e.NodeB,

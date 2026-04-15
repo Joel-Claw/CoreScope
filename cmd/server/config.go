@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/meshcore-analyzer/geofilter"
 )
@@ -25,7 +26,7 @@ type Config struct {
 
 	// blacklistSetCached is the lazily-built set version of NodeBlacklist.
 	blacklistSetCached map[string]bool
-	blacklistSetBuilt   bool
+	blacklistOnce      sync.Once
 
 	Branding   map[string]interface{} `json:"branding"`
 	Theme      map[string]interface{} `json:"theme"`
@@ -351,23 +352,22 @@ func (c *Config) PropagationBufferMs() int {
 }
 
 // blacklistSet lazily builds and caches the nodeBlacklist as a set for O(1) lookups.
+// Uses sync.Once to eliminate the data race on first concurrent access.
 func (c *Config) blacklistSet() map[string]bool {
-	if c.blacklistSetBuilt {
-		return c.blacklistSetCached
-	}
-	c.blacklistSetBuilt = true
-	if len(c.NodeBlacklist) == 0 {
-		return nil
-	}
-	m := make(map[string]bool, len(c.NodeBlacklist))
-	for _, pk := range c.NodeBlacklist {
-		trimmed := strings.ToLower(strings.TrimSpace(pk))
-		if trimmed != "" {
-			m[trimmed] = true
+	c.blacklistOnce.Do(func() {
+		if len(c.NodeBlacklist) == 0 {
+			return
 		}
-	}
-	c.blacklistSetCached = m
-	return m
+		m := make(map[string]bool, len(c.NodeBlacklist))
+		for _, pk := range c.NodeBlacklist {
+			trimmed := strings.ToLower(strings.TrimSpace(pk))
+			if trimmed != "" {
+				m[trimmed] = true
+			}
+		}
+		c.blacklistSetCached = m
+	})
+	return c.blacklistSetCached
 }
 
 // IsBlacklisted returns true if the given public key is in the nodeBlacklist.
