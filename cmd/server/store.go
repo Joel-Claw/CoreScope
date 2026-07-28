@@ -177,7 +177,6 @@ type PacketStore struct {
 	byNode        map[string][]*StoreTx      // pubkey → transmissions
 	nodeHashes    map[string]map[string]bool // pubkey → Set<hash>
 	byPathHop     map[string][]*StoreTx      // lowercase hop/pubkey → transmissions with that hop in path
-	relayTimes    map[string][]int64         // lowercase pubkey → sorted unix-millis of relay events (full pubkeys only)
 	byPayloadType map[int][]*StoreTx         // payload_type → transmissions
 	loaded        bool
 	totalObs      int
@@ -644,7 +643,6 @@ func NewPacketStore(db *DB, cfg *PacketStoreConfig, cacheTTLs ...map[string]inte
 		byObserver:    make(map[string][]*StoreObs),
 		byNode:        make(map[string][]*StoreTx),
 		byPathHop:     make(map[string][]*StoreTx),
-		relayTimes:    make(map[string][]int64),
 		nodeHashes:    make(map[string]map[string]bool),
 		byPayloadType: make(map[int][]*StoreTx),
 		rfCache:       make(map[string]*cachedResult),
@@ -4791,6 +4789,19 @@ func (s *PacketStore) evictStaleInternal(rpBatch map[int][]string) int {
 	// Compact resolved pubkey index after eviction sweep
 	s.CompactResolvedPubkeyIndex()
 	s.CheckResolvedPubkeyIndexSize()
+
+	// Prune lastSeenTouched: remove entries older than the debounce window
+	// (5 minutes). This map grows unbounded as new relay pubkeys are seen;
+	// without pruning, a long-running instance accumulates one entry per
+	// unique pubkey ever observed, even after those nodes are evicted.
+	if len(s.lastSeenTouched) > 0 {
+		debounceCutoff := time.Now().Add(-5 * time.Minute)
+		for pk, ts := range s.lastSeenTouched {
+			if ts.Before(debounceCutoff) {
+				delete(s.lastSeenTouched, pk)
+			}
+		}
+	}
 
 	return evictCount
 }
