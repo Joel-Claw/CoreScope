@@ -4478,13 +4478,27 @@ func estimateStoreObsBytes(obs *StoreObs) int64 {
 // estimatedMemoryMB returns current Go heap allocation in MB.
 // Kept for stats/debug endpoints only — NOT used in eviction decisions.
 // In tests, memoryEstimator can be set to inject a deterministic value.
+// Caches the result for 5 seconds because runtime.ReadMemStats() stops the
+// world and this is called from stats/debug endpoints that may be polled.
+var (
+	estimatedMemMu   sync.Mutex
+	estimatedMemVal  float64
+	estimatedMemAt   time.Time
+)
+
 func (s *PacketStore) estimatedMemoryMB() float64 {
 	if s.memoryEstimator != nil {
 		return s.memoryEstimator()
 	}
-	var ms runtime.MemStats
-	runtime.ReadMemStats(&ms)
-	return float64(ms.HeapAlloc) / 1048576.0
+	estimatedMemMu.Lock()
+	defer estimatedMemMu.Unlock()
+	if time.Since(estimatedMemAt) > 5*time.Second {
+		var ms runtime.MemStats
+		runtime.ReadMemStats(&ms)
+		estimatedMemVal = float64(ms.HeapAlloc) / 1048576.0
+		estimatedMemAt = time.Now()
+	}
+	return estimatedMemVal
 }
 
 // trackedMemoryMB returns the self-accounted packet store memory in MB.
@@ -5086,7 +5100,11 @@ func computeDistancesForTx(tx *StoreTx, nodeByPk map[string]*nodeInfo, repeaterS
 }
 
 func filterTxSlice(s []*StoreTx, fn func(*StoreTx) bool) []*StoreTx {
-	var result []*StoreTx
+	// Pre-allocate with half the source length as a heuristic: most filters
+	// match a subset of packets, and over-allocating by 2x is cheaper than
+	// the repeated growth+copy cycles of an unitialized slice.
+	n := len(s)
+	result := make([]*StoreTx, 0, n/2)
 	for _, tx := range s {
 		if fn(tx) {
 			result = append(result, tx)
