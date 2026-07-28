@@ -2954,8 +2954,7 @@ func (s *Server) handleAudioLabBuckets(w http.ResponseWriter, r *http.Request) {
 			}
 			typeName := "UNKNOWN"
 			if tx.DecodedJSON != "" {
-				var d map[string]interface{}
-				if err := json.Unmarshal([]byte(tx.DecodedJSON), &d); err == nil {
+				if d := tx.ParsedDecoded(); d != nil {
 					if t, ok := d["type"].(string); ok && t != "" {
 						typeName = t
 					}
