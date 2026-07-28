@@ -47,6 +47,22 @@ type DB struct {
 	channelsCacheKey string
 	channelsCacheRes []map[string]interface{}
 	channelsCacheExp time.Time
+
+	// Prepared statements for frequently-called queries.
+	// Prepared once at initDB time, reused across all requests.
+	stmtCountTransmissions  *sql.Stmt
+	stmtCountObservations   *sql.Stmt
+	stmtCountNodesActive    *sql.Stmt // WHERE last_seen > ?
+	stmtCountNodesAll       *sql.Stmt
+	stmtCountObservers      *sql.Stmt
+	stmtCountObsLastHour    *sql.Stmt // WHERE timestamp > ?
+	stmtCountObsLastDay     *sql.Stmt // WHERE timestamp > ?
+	stmtNodeLookup          *sql.Stmt // WHERE public_key = ? OR name = ?
+	stmtTxByHash            *sql.Stmt // WHERE hash = ?
+	stmtCountNodesByRole    *sql.Stmt // WHERE role = ? AND last_seen > ?
+	stmtCountNodesByRoleAll *sql.Stmt // WHERE role = ?
+	stmtMaxTxID             *sql.Stmt // COALESCE(MAX(id), 0) FROM transmissions
+	stmtMaxObsID            *sql.Stmt // COALESCE(MAX(id), 0) FROM observations
 }
 
 // OpenDB opens a read-only SQLite connection with WAL mode.
@@ -64,10 +80,57 @@ func OpenDB(path string) (*DB, error) {
 	}
 	d := &DB{conn: conn, path: path}
 	d.detectSchema()
+	if err := d.prepareStatements(); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("prepare statements: %w", err)
+	}
 	return d, nil
 }
 
+// prepareStatements creates prepared statements for frequently-called queries.
+// SQLite compiles and caches the query plan once, avoiding re-parsing per request.
+func (db *DB) prepareStatements() error {
+	var err error
+	prepare := func(query string) *sql.Stmt {
+		if err != nil {
+			return nil
+		}
+		var s *sql.Stmt
+		s, err = db.conn.Prepare(query)
+		return s
+	}
+
+	db.stmtCountTransmissions = prepare("SELECT COUNT(*) FROM transmissions")
+	db.stmtCountObservations = prepare("SELECT COUNT(*) FROM observations")
+	db.stmtCountNodesActive = prepare("SELECT COUNT(*) FROM nodes WHERE last_seen > ?")
+	db.stmtCountNodesAll = prepare("SELECT COUNT(*) FROM nodes")
+	db.stmtCountObservers = prepare("SELECT COUNT(*) FROM observers WHERE inactive IS NULL OR inactive = 0")
+	db.stmtCountObsLastHour = prepare("SELECT COUNT(*) FROM observations WHERE timestamp > ?")
+	db.stmtCountObsLastDay = prepare("SELECT COUNT(*) FROM observations WHERE timestamp > ?")
+	db.stmtNodeLookup = prepare("SELECT public_key FROM nodes WHERE public_key = ? OR name = ? LIMIT 1")
+	db.stmtTxByHash = prepare("SELECT id FROM transmissions WHERE hash = ?")
+	db.stmtCountNodesByRole = prepare("SELECT COUNT(*) FROM nodes WHERE role = ? AND last_seen > ?")
+	db.stmtCountNodesByRoleAll = prepare("SELECT COUNT(*) FROM nodes WHERE role = ?")
+	db.stmtMaxTxID = prepare("SELECT COALESCE(MAX(id), 0) FROM transmissions")
+	db.stmtMaxObsID = prepare("SELECT COALESCE(MAX(id), 0) FROM observations")
+	return err
+}
+
 func (db *DB) Close() error {
+	// Close prepared statements
+	closers := []*sql.Stmt{
+		db.stmtCountTransmissions, db.stmtCountObservations,
+		db.stmtCountNodesActive, db.stmtCountNodesAll, db.stmtCountObservers,
+		db.stmtCountObsLastHour, db.stmtCountObsLastDay,
+		db.stmtNodeLookup, db.stmtTxByHash,
+		db.stmtCountNodesByRole, db.stmtCountNodesByRoleAll,
+		db.stmtMaxTxID, db.stmtMaxObsID,
+	}
+	for _, s := range closers {
+		if s != nil {
+			s.Close()
+		}
+	}
 	// Checkpoint WAL before closing to release lock cleanly for new processes
 	if _, err := db.conn.Exec("PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
 		log.Printf("[db] WAL checkpoint error: %v", err)
@@ -322,24 +385,24 @@ type Stats struct {
 // GetStats returns aggregate counts (matches Node.js db.getStats shape).
 func (db *DB) GetStats() (*Stats, error) {
 	s := &Stats{}
-	err := db.conn.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&s.TotalTransmissions)
+	err := db.stmtCountTransmissions.QueryRow().Scan(&s.TotalTransmissions)
 	if err != nil {
 		return nil, err
 	}
 	s.TotalPackets = s.TotalTransmissions
 
-	db.conn.QueryRow("SELECT COUNT(*) FROM observations").Scan(&s.TotalObservations)
+	db.stmtCountObservations.QueryRow().Scan(&s.TotalObservations)
 	// Node.js uses 7-day active nodes for totalNodes
 	sevenDaysAgo := time.Now().Add(-7 * 24 * time.Hour).Format(time.RFC3339)
-	db.conn.QueryRow("SELECT COUNT(*) FROM nodes WHERE last_seen > ?", sevenDaysAgo).Scan(&s.TotalNodes)
-	db.conn.QueryRow("SELECT COUNT(*) FROM nodes").Scan(&s.TotalNodesAllTime)
-	db.conn.QueryRow("SELECT COUNT(*) FROM observers WHERE inactive IS NULL OR inactive = 0").Scan(&s.TotalObservers)
+	db.stmtCountNodesActive.QueryRow(sevenDaysAgo).Scan(&s.TotalNodes)
+	db.stmtCountNodesAll.QueryRow().Scan(&s.TotalNodesAllTime)
+	db.stmtCountObservers.QueryRow().Scan(&s.TotalObservers)
 
 	oneHourAgo := time.Now().Add(-1 * time.Hour).Unix()
-	db.conn.QueryRow("SELECT COUNT(*) FROM observations WHERE timestamp > ?", oneHourAgo).Scan(&s.PacketsLastHour)
+	db.stmtCountObsLastHour.QueryRow(oneHourAgo).Scan(&s.PacketsLastHour)
 
 	oneDayAgo := time.Now().Add(-24 * time.Hour).Unix()
-	db.conn.QueryRow("SELECT COUNT(*) FROM observations WHERE timestamp > ?", oneDayAgo).Scan(&s.PacketsLast24h)
+	db.stmtCountObsLastDay.QueryRow(oneDayAgo).Scan(&s.PacketsLast24h)
 
 	return s, nil
 }
@@ -461,7 +524,7 @@ func (db *DB) GetRoleCounts() map[string]int {
 	counts := map[string]int{}
 	for _, role := range []string{"repeater", "room", "companion", "sensor"} {
 		var c int
-		db.conn.QueryRow("SELECT COUNT(*) FROM nodes WHERE role = ? AND last_seen > ?", role, sevenDaysAgo).Scan(&c)
+		db.stmtCountNodesByRole.QueryRow(role, sevenDaysAgo).Scan(&c)
 		counts[role+"s"] = c
 	}
 	return counts
@@ -472,7 +535,7 @@ func (db *DB) GetAllRoleCounts() map[string]int {
 	counts := map[string]int{}
 	for _, role := range []string{"repeater", "room", "companion", "sensor"} {
 		var c int
-		db.conn.QueryRow("SELECT COUNT(*) FROM nodes WHERE role = ?", role).Scan(&c)
+		db.stmtCountNodesByRoleAll.QueryRow(role).Scan(&c)
 		counts[role+"s"] = c
 	}
 	return counts
@@ -522,7 +585,7 @@ func (db *DB) QueryPackets(q PacketQuery) (*PacketResult, error) {
 	// Count transmissions (not observations)
 	var total int
 	if len(where) == 0 {
-		db.conn.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&total)
+		db.stmtCountTransmissions.QueryRow().Scan(&total)
 	} else {
 		countSQL := fmt.Sprintf("SELECT COUNT(*) FROM transmissions t %s", w)
 		db.conn.QueryRow(countSQL, args...).Scan(&total)
@@ -574,7 +637,7 @@ func (db *DB) QueryGroupedPackets(q PacketQuery) (*PacketResult, error) {
 	// Count total transmissions (fast — queries transmissions directly, not a VIEW)
 	var total int
 	if len(where) == 0 {
-		db.conn.QueryRow("SELECT COUNT(*) FROM transmissions").Scan(&total)
+		db.stmtCountTransmissions.QueryRow().Scan(&total)
 	} else {
 		db.conn.QueryRow(fmt.Sprintf("SELECT COUNT(*) FROM transmissions t %s", w), args...).Scan(&total)
 	}
@@ -806,7 +869,7 @@ func (db *DB) buildTransmissionWhere(q PacketQuery) ([]string, []interface{}) {
 
 func (db *DB) resolveNodePubkey(nodeIDOrName string) string {
 	var pk string
-	err := db.conn.QueryRow("SELECT public_key FROM nodes WHERE public_key = ? OR name = ? LIMIT 1", nodeIDOrName, nodeIDOrName).Scan(&pk)
+	err := db.stmtNodeLookup.QueryRow(nodeIDOrName, nodeIDOrName).Scan(&pk)
 	if err != nil {
 		return nodeIDOrName
 	}
@@ -851,8 +914,7 @@ func (db *DB) GetPacketByHash(hash string) (map[string]interface{}, error) {
 // when the in-memory PacketStore has pruned the entry but the DB still has it.
 func (db *DB) GetObservationsForHash(hash string) []map[string]interface{} {
 	var txID int
-	err := db.conn.QueryRow("SELECT id FROM transmissions WHERE hash = ?",
-		strings.ToLower(hash)).Scan(&txID)
+	err := db.stmtTxByHash.QueryRow(strings.ToLower(hash)).Scan(&txID)
 	if err != nil {
 		return nil
 	}
@@ -2034,14 +2096,14 @@ func (db *DB) GetNewTransmissionsSince(lastID int, limit int) ([]map[string]inte
 // GetMaxTransmissionID returns the current max ID for polling.
 func (db *DB) GetMaxTransmissionID() int {
 	var maxID int
-	db.conn.QueryRow("SELECT COALESCE(MAX(id), 0) FROM transmissions").Scan(&maxID)
+	db.stmtMaxTxID.QueryRow().Scan(&maxID)
 	return maxID
 }
 
 // GetMaxObservationID returns the current max observation ID for polling.
 func (db *DB) GetMaxObservationID() int {
 	var maxID int
-	db.conn.QueryRow("SELECT COALESCE(MAX(id), 0) FROM observations").Scan(&maxID)
+	db.stmtMaxObsID.QueryRow().Scan(&maxID)
 	return maxID
 }
 
