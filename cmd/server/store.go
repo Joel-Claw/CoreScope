@@ -2917,7 +2917,13 @@ func (s *PacketStore) IngestNewFromDB(sinceID, limit int) ([]map[string]interfac
 		}
 		if tx.DecodedJSON != "" {
 			if payload := tx.ParsedDecoded(); payload != nil {
-				decoded["payload"] = payload
+				// Copy the cached map so broadcast consumers cannot mutate
+				// the shared cache or cause a data race (#1871 review).
+				cp := make(map[string]interface{}, len(payload))
+				for k, v := range payload {
+					cp[k] = v
+				}
+				decoded["payload"] = cp
 			}
 		}
 		// For TRACE packets, decode the full packet to include path.hopsCompleted
@@ -3189,7 +3195,13 @@ func (s *PacketStore) IngestNewObservations(sinceObsID, limit int) []map[string]
 		}
 		if tx.DecodedJSON != "" {
 			if payload := tx.ParsedDecoded(); payload != nil {
-				decoded["payload"] = payload
+				// Copy the cached map so broadcast consumers cannot mutate
+				// the shared cache or cause a data race (#1871 review).
+				cp := make(map[string]interface{}, len(payload))
+				for k, v := range payload {
+					cp[k] = v
+				}
+				decoded["payload"] = cp
 			}
 		}
 		// For TRACE packets, decode the full packet to include path.hopsCompleted
