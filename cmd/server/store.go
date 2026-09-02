@@ -1751,8 +1751,6 @@ func (s *PacketStore) touchRelayLastSeen(resolvedPubkeys []string, now time.Time
 	if s.db == nil || len(resolvedPubkeys) == 0 {
 		return
 	}
-	const debounceInterval = 5 * time.Minute
-
 	ts := now.UTC().Format(time.RFC3339)
 	seen := make(map[string]bool, len(resolvedPubkeys))
 	for _, pk := range resolvedPubkeys {
@@ -1760,7 +1758,7 @@ func (s *PacketStore) touchRelayLastSeen(resolvedPubkeys []string, now time.Time
 			continue
 		}
 		seen[pk] = true
-		if last, ok := s.lastSeenTouched[pk]; ok && now.Sub(last) < debounceInterval {
+		if last, ok := s.lastSeenTouched[pk]; ok && now.Sub(last) < relayLastSeenDebounceInterval {
 			continue
 		}
 		if err := s.db.TouchNodeLastSeen(pk, ts); err == nil {
@@ -4414,6 +4412,11 @@ const (
 	// Per-tx map overhead (obsKeys + observerSet): map header + initial buckets
 	perTxMapsBytes = 200
 
+	// relayLastSeenDebounceInterval is the minimum interval between
+	// TouchNodeLastSeen DB writes for the same pubkey. Entries in
+	// lastSeenTouched older than this interval are pruned during eviction.
+	relayLastSeenDebounceInterval = 5 * time.Minute
+
 	// Per path hop: byPathHop index entry (pointer + map bucket)
 	perPathHopBytes = 50
 
@@ -4795,7 +4798,7 @@ func (s *PacketStore) evictStaleInternal(rpBatch map[int][]string) int {
 	// without pruning, a long-running instance accumulates one entry per
 	// unique pubkey ever observed, even after those nodes are evicted.
 	if len(s.lastSeenTouched) > 0 {
-		debounceCutoff := time.Now().Add(-5 * time.Minute)
+		debounceCutoff := time.Now().Add(-relayLastSeenDebounceInterval)
 		for pk, ts := range s.lastSeenTouched {
 			if ts.Before(debounceCutoff) {
 				delete(s.lastSeenTouched, pk)
