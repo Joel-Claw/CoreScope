@@ -480,6 +480,13 @@ type PacketStore struct {
 	trackedBytes     int64          // running total of estimated packet store memory
 	memoryEstimator  func() float64 // injectable for tests; nil = use runtime.ReadMemStats (stats only)
 
+	// Per-store ReadMemStats cache (5s TTL). Fields (not package-level vars) so
+	// that test helpers constructing &PacketStore{...} directly get independent
+	// cache state, avoiding order-dependent test failures.
+	estMemMu  sync.Mutex
+	estMemVal float64
+	estMemAt  time.Time
+
 	// Short-lived cache for the observations aggregate in GetStoreStats (30s TTL).
 	// Avoids a per-/api/stats full-table scan; values accurate to ~30s which is
 	// sufficient for dashboard display.
@@ -4480,25 +4487,22 @@ func estimateStoreObsBytes(obs *StoreObs) int64 {
 // In tests, memoryEstimator can be set to inject a deterministic value.
 // Caches the result for 5 seconds because runtime.ReadMemStats() stops the
 // world and this is called from stats/debug endpoints that may be polled.
-var (
-	estimatedMemMu   sync.Mutex
-	estimatedMemVal  float64
-	estimatedMemAt   time.Time
-)
-
+// The cache is per-store (not package-level) so that test helpers constructing
+// &PacketStore{...} directly get independent cache state, avoiding
+// order-dependent test failures from a shared global cache.
 func (s *PacketStore) estimatedMemoryMB() float64 {
 	if s.memoryEstimator != nil {
 		return s.memoryEstimator()
 	}
-	estimatedMemMu.Lock()
-	defer estimatedMemMu.Unlock()
-	if time.Since(estimatedMemAt) > 5*time.Second {
+	s.estMemMu.Lock()
+	defer s.estMemMu.Unlock()
+	if time.Since(s.estMemAt) > 5*time.Second {
 		var ms runtime.MemStats
 		runtime.ReadMemStats(&ms)
-		estimatedMemVal = float64(ms.HeapAlloc) / 1048576.0
-		estimatedMemAt = time.Now()
+		s.estMemVal = float64(ms.HeapAlloc) / 1048576.0
+		s.estMemAt = time.Now()
 	}
-	return estimatedMemVal
+	return s.estMemVal
 }
 
 // trackedMemoryMB returns the self-accounted packet store memory in MB.
@@ -5100,11 +5104,7 @@ func computeDistancesForTx(tx *StoreTx, nodeByPk map[string]*nodeInfo, repeaterS
 }
 
 func filterTxSlice(s []*StoreTx, fn func(*StoreTx) bool) []*StoreTx {
-	// Pre-allocate with half the source length as a heuristic: most filters
-	// match a subset of packets, and over-allocating by 2x is cheaper than
-	// the repeated growth+copy cycles of an unitialized slice.
-	n := len(s)
-	result := make([]*StoreTx, 0, n/2)
+	var result []*StoreTx
 	for _, tx := range s {
 		if fn(tx) {
 			result = append(result, tx)
